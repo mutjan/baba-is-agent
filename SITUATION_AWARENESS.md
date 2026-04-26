@@ -10,7 +10,9 @@ Continue playing the current save, one level at a time:
 2. Enter the next level from the map only after verifying the real cursor.
 3. After entering any new level, read and restate its initial active rules before solving.
 4. Run the rule-mobility analysis: identify which initial text rules can actually be pushed, and which pushes preserve the current `YOU` rule.
-5. Solve by combining parser output with short in-game feedback loops.
+5. Solve by combining parser output with short in-game feedback loops. Prefer a
+   meaningful move segment such as `left*3` over mechanical one-step polling
+   when the expected state change is clear.
 6. Verify success from save status, not from command exit codes.
 
 ## Important User Preferences
@@ -95,6 +97,13 @@ For turn-by-turn feedback, send moves through the state-aware wrapper:
 python3 scripts/baba_step.py 'right,up'
 ```
 
+For interactive play, send a short hypothesis segment and print only the state
+delta:
+
+```bash
+python3 scripts/baba_try.py 'left*3'
+```
+
 Restart current level when stuck:
 
 ```bash
@@ -123,22 +132,26 @@ active rules, search only relevant movable text, preserve YOU, and widen
 
 ## Current Save Snapshot
 
-At the time this handoff was written:
+At the time this handoff was last updated:
 
 - `slot=2`
 - `world=baba`
-- `Previous=209level`
+- `Previous=15level`
 - `leveltree=106level,177level`
-- Completed: `0level=3`, `1level=3`, `2level=3`, `3level=3`, `4level=3`, `5level=3`, `6level=3`, `10level=3`, `20level=3`, `90level=3`, `93level=3`, `209level=3`, `212level=3`
-- Uncompleted/unlocked seen in save: `8level=2`, `15level=2`, `189level=2`, `210level=2`, `211level=2`, `177level=2`
+- Completed: `0level=3`, `1level=3`, `2level=3`, `3level=3`, `4level=3`, `5level=3`, `6level=3`, `10level=3`, `20level=3`, `90level=3`, `93level=3`, `189level=3`, `209level=3`, `212level=3`
+- Uncompleted/unlocked seen in save: `8level=2`, `15level=2`, `210level=2`, `211level=2`, `177level=2`
 
-The player has just completed `209level / lock` inside `177level / 1. the lake`; `15level`, `8level`, `210level`, `211level`, `189level`, and `177level` are still unlocked. Before executing any map route, re-run:
+The player has completed `189level / now what is this?` and the current save
+now points at `15level / novice locksmith`. Before solving or executing any map
+route, re-run:
 
 ```bash
-python3 scripts/baba_map_route.py
+python3 scripts/read_baba_state.py
+python3 scripts/parse_baba_level.py --rules-only
 ```
 
-At the time of this update it reported `target=15level`, `cursor=(16, 7) source=levelsurrounds`, and `moves=left,enter`.
+If the player is on the map instead of inside a level, use
+`python3 scripts/baba_map_route.py` to re-detect the real cursor.
 
 ## Files To Know
 
@@ -152,9 +165,13 @@ At the time of this update it reported `target=15level`, `cursor=(16, 7) source=
 - `scripts/read_baba_probe.py`: reads the canary result from `world_data.txt`.
 - `scripts/read_baba_state.py`: reads the current exported save-group state, with legacy JSON fallback.
 - `scripts/baba_step.py`: sends each move and waits for the live state to update.
+- `scripts/baba_try.py`: sends a short action segment and prints state deltas for
+  rules, moved units, disappeared units, and completion status.
 - `runs/baba_learned_rules.md`: generic rules only.
 - `runs/baba_level_notes.md`: level-specific routes and notes.
 - `docs/baba_level_parsing_method.md`: parser method and coordinate notes.
+- `docs/baba_state_guided_play_method.md`: state-reader-guided play loop and
+  script-vs-Markdown boundary.
 - `dev/baba_control_handoff.md`: longer historical handoff.
 
 ## Critical Rules
@@ -172,6 +189,9 @@ At the time of this update it reported `target=15level`, `cursor=(16, 7) source=
 - If a route fails, restart with `python3 scripts/baba_restart.py`, then try a shorter or corrected route.
 - If `scripts/read_baba_state.py` has fresh output, prefer it over static `.l/.ld` parsing
   for turn-by-turn object and text positions.
+- When using the live exporter, stop each move segment at a meaningful
+  checkpoint: rules added/removed, key text moved into place, object removed, or
+  level completion. Use `baba_try.py` for this concise delta.
 
 ## Recent Proven Routes
 
@@ -183,3 +203,12 @@ up,left*3,down,right*9,right*2,up,right*3,down,left*7,up,left,down*5,right,down,
 ```
 
 Use `--delay 0.5 --hold-ms 140` for this route. It completed with `209level=3`.
+
+`189level / now what is this?`:
+
+```text
+left*3,up*7,right*3,down,right*2,up,left*3,down,left,up*2,left,down,left,up,left
+```
+
+It breaks `FLAG IS STOP`, builds `FLAG IS WIN` around the fixed upper `IS`, and
+completed with `189level=3`.

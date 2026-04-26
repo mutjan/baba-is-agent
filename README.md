@@ -129,6 +129,12 @@ Send one or more moves and wait for the exporter after each move:
 python3 scripts/baba_step.py 'right,up'
 ```
 
+Send a short hypothesis segment and print only the meaningful state delta:
+
+```bash
+python3 scripts/baba_try.py 'left*3'
+```
+
 Detect a route from the current world map cursor to the next unlocked level:
 
 ```bash
@@ -146,6 +152,10 @@ Search for a text-rule route, such as building `FLAG IS WIN`:
 ```bash
 python3 scripts/baba_search_route.py --make-rule flag is win
 ```
+
+See `docs/baba_state_guided_play_method.md` for the interactive
+state-reader-guided workflow and when to use short experiments instead of full
+route search.
 
 ## Tools
 
@@ -170,6 +180,22 @@ python3 scripts/baba_search_route.py --make-rule flag is win
   the save group, with legacy JSON fallback.
 - `scripts/baba_step.py`: sends moves one at a time and waits for fresh live
   state after each turn.
+- `scripts/baba_try.py`: sends a short move segment, waits for state refreshes,
+  and prints rules/units/completion changes instead of a full state dump.
+
+## Changelog
+
+### 2026-04-26
+
+- Added `scripts/baba_try.py` for interactive state-delta experiments: send a
+  short move segment, wait for live state refreshes, and inspect only meaningful
+  rules, unit, and completion changes.
+- Documented the state-reader-guided play loop in
+  `docs/baba_state_guided_play_method.md`, including when to use short
+  experiments instead of heavier route search.
+- Validated the interactive method on `189level / now what is this?`; the same
+  workflow is usable by smaller models because each step has a narrow,
+  state-readable checkpoint.
 
 ## Current Limits
 
