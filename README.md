@@ -78,6 +78,28 @@ Send moves:
 python3 scripts/baba_send_keys.py 'right,left,up'
 ```
 
+`baba_send_keys.py` defaults to a 0.5 second delay between keys because faster
+input can miss restart confirmation or long routes in Baba Is You.
+
+Restart the current level or world-map position:
+
+```bash
+python3 scripts/baba_restart.py
+```
+
+Install the live runtime state exporter:
+
+```bash
+python3 scripts/install_baba_state_exporter.py
+```
+
+Then restart Baba Is You so the game loads `Data/Lua/codex_state_export.lua`.
+After each level start or turn, read the latest runtime state:
+
+```bash
+python3 scripts/read_baba_state.py
+```
+
 Detect a route from the current world map cursor to the next unlocked level:
 
 ```bash
@@ -99,19 +121,23 @@ python3 scripts/baba_map_route.py --execute
 - `scripts/baba_cgevent_keys.c`: tiny macOS key-event sender.
 - `scripts/baba_map_route.py`: infers current map cursor and next-level route from save
   and map metadata.
+- `lua/codex_state_export.lua`: optional Baba `Data/Lua` hook that exports live
+  runtime units and rules to JSON after turns.
+- `scripts/install_baba_state_exporter.py`: installs or removes the Lua exporter.
+- `scripts/read_baba_state.py`: prints the latest exported runtime state.
 
 ## Current Limits
 
 - Only tested on Codex on macOS.
 - Static level parsing reads the initial level layout, not live per-turn object
   state after arbitrary moves.
-- The recommended next step for stronger automation is a thin Lua state exporter
-  that only writes current game state; input should remain CGEvent-based.
+- Live per-turn object positions require the optional Lua exporter. Input remains
+  CGEvent-based; the Lua file only writes current game state.
 
 ## Safety Notes
 
 - Do not grant broad permissions blindly. Only the process running these scripts
   needs Accessibility access.
 - Do not rely on screenshot verification in Codex for this game; use save files,
-  parser output, or direct user observation.
+  parser output, the live state exporter, or direct user observation.
 - Keep `baba_config.json` local. It may contain machine-specific paths.

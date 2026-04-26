@@ -13,6 +13,7 @@ import collections
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from baba_config import load_config
@@ -171,6 +172,11 @@ def main() -> int:
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
     parser.add_argument("--enter-key", choices=["enter", "confirm"], default="enter")
     parser.add_argument("--execute", action="store_true", help="Send the detected route with baba_send_keys.py")
+    parser.add_argument(
+        "--no-rules-summary",
+        action="store_true",
+        help="Do not print the entered level's initial active rules after --execute",
+    )
     args = parser.parse_args()
     config = load_config(args.config)
     game_root = args.game_root or config.game_root
@@ -261,6 +267,18 @@ def main() -> int:
 
     if args.execute:
         subprocess.run([sys.executable, str(ROOT / "baba_send_keys.py"), ",".join(moves)], check=True)
+        if not args.no_rules_summary:
+            for _ in range(20):
+                try:
+                    _slot, _world, current = current_level(save_dir)
+                except SystemExit:
+                    current = None
+                if current == target:
+                    break
+                time.sleep(0.1)
+            print()
+            print("Entered level initial rules:")
+            subprocess.run([sys.executable, str(ROOT / "parse_baba_level.py"), "--rules-only"], check=False)
 
     return 0
 

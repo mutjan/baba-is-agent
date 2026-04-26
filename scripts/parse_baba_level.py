@@ -232,6 +232,7 @@ def main() -> int:
     parser.add_argument("--world", help="World folder, such as museum or baba")
     parser.add_argument("--level", help="Level id without extension, such as y128level")
     parser.add_argument("--all-layers", action="store_true", help="Print every map layer")
+    parser.add_argument("--rules-only", action="store_true", help="Print level identity and initial active rules only")
     args = parser.parse_args()
     config = load_config(args.config)
     game_root = args.game_root or config.game_root
@@ -266,9 +267,12 @@ def main() -> int:
     print(f"size={width}x{height} layers={len(layers)}")
     print(f"movement_bounds={move_bounds} (file coordinates; outer border is not walkable)")
     print()
-    print("Active rules:")
+    print("Initial active rules:" if args.rules_only else "Active rules:")
     for direction, (x, y), first, middle, last in rules:
         print(f"  {direction} ({x},{y}): {first} {middle} {last}")
+
+    if args.rules_only:
+        return 0
 
     print()
     layer_count = len(layers) if args.all_layers else 1

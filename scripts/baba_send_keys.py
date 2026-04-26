@@ -136,7 +136,7 @@ def main() -> int:
         "moves",
         help="Comma-separated moves, e.g. 'right*8' or 'right,right,up'",
     )
-    parser.add_argument("--delay", type=float, default=0.08, help="Delay between keys")
+    parser.add_argument("--delay", type=float, default=0.5, help="Delay between keys")
     parser.add_argument("--dry-run", action="store_true", help="Print without sending")
     parser.add_argument(
         "--method",
