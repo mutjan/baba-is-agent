@@ -157,7 +157,11 @@ def main() -> int:
     parser.add_argument("--app-name", help="Override configured macOS app name")
     parser.add_argument("--state-path", type=Path, help="Override legacy JSON state path")
     parser.add_argument("--timeout", type=float, default=3.0, help="Seconds to wait after each move")
-    parser.add_argument("--delay", type=float, default=0.5, help="Delay after each key press")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        help="Delay after each key press. Defaults to input_delay in baba_config.json.",
+    )
     parser.add_argument("--hold-ms", type=int, default=90, help="Milliseconds to hold each cgevent key")
     parser.add_argument(
         "--method",
@@ -177,6 +181,7 @@ def main() -> int:
     config = load_config(args.config)
     save_dir = args.save_dir or config.save_dir
     app_name = args.app_name or config.app_name
+    delay = args.delay if args.delay is not None else config.input_delay
     live_state_path = state_path(save_dir, args.state_path)
 
     before = load_state(live_state_path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
@@ -192,7 +197,7 @@ def main() -> int:
         latest_state = before
         for index, move in enumerate(moves, start=1):
             before_mtime = current_state_mtime(live_state_path, save_dir)
-            send_one(move, method=args.method, delay=args.delay, hold_ms=args.hold_ms)
+            send_one(move, method=args.method, delay=delay, hold_ms=args.hold_ms)
             latest_state = load_state(
                 live_state_path,
                 wait=True,

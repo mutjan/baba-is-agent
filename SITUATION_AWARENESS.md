@@ -178,7 +178,10 @@ If the player is on the map instead of inside a level, use
 
 - `frontmost=Chowdren` only proves the game process is focused; it does not prove movement or success.
 - A level is complete only when its save field becomes `3`.
-- Use the default `0.5s` delay between key presses. For long routes, keep the cgevent hold at least `90ms`; route notes may specify a higher hold such as `140ms`.
+- Use the configured `input_delay` between key presses. The current default is
+  `0.02s`; if another machine drops inputs, raise `input_delay` in
+  `baba_config.json`. For long routes, keep the cgevent hold at least `90ms`;
+  route notes may specify a higher hold such as `140ms`.
 - Expand `AND` rules when restating initial rules, e.g. `BABA IS YOU AND SINK` means both `BABA IS YOU` and `BABA IS SINK`.
 - If Lua exporter work causes startup errors, immediately run
   `python3 scripts/install_baba_state_exporter.py --uninstall` and restart Baba

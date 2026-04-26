@@ -787,7 +787,11 @@ def main() -> int:
         help="Search target rule patterns inside the relevant text bounding box plus this margin.",
     )
     parser.add_argument("--execute", action="store_true", help="Send the found route")
-    parser.add_argument("--delay", type=float, default=0.5, help="Delay used with --execute")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        help="Delay used with --execute. Defaults to input_delay in baba_config.json.",
+    )
     args = parser.parse_args()
 
     subject, middle, prop = (part.lower() for part in args.make_rule)
@@ -797,6 +801,7 @@ def main() -> int:
     config = load_config(args.config)
     game_root = args.game_root or config.game_root
     save_dir = args.save_dir or config.save_dir
+    delay = args.delay if args.delay is not None else config.input_delay
     level = load_level(game_root, save_dir, args.world, args.level)
     search_config = SearchConfig(
         goal_subject=subject,
@@ -824,11 +829,11 @@ def main() -> int:
         "final_selected_text="
         + ", ".join(f"{unit.label}:{coord}" for unit, coord in zip(problem.selected, boxes))
     )
-    print(f"command=python3 scripts/baba_send_keys.py '{compact}' --delay {args.delay}")
+    print(f"command=python3 scripts/baba_send_keys.py '{compact}' --delay {delay}")
 
     if args.execute:
         subprocess.run(
-            [sys.executable, str(ROOT / "baba_send_keys.py"), compact, "--delay", str(args.delay)],
+            [sys.executable, str(ROOT / "baba_send_keys.py"), compact, "--delay", str(delay)],
             check=True,
         )
     return 0

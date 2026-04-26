@@ -19,7 +19,11 @@ RESTART_MOVES = "r,down,enter"
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--delay", type=float, default=0.5, help="Delay between keys")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        help="Delay between keys. Defaults to input_delay in baba_config.json.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print without sending")
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--app-name", help="Override configured macOS app name")
@@ -34,9 +38,9 @@ def main() -> int:
         sys.executable,
         str(ROOT / "baba_send_keys.py"),
         RESTART_MOVES,
-        "--delay",
-        str(args.delay),
     ]
+    if args.delay is not None:
+        command.extend(["--delay", str(args.delay)])
     if args.dry_run:
         command.append("--dry-run")
     if args.config:

@@ -16,13 +16,14 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "baba_config.json"
 EXAMPLE_CONFIG_PATH = PROJECT_ROOT / "baba_config.example.json"
 
-DEFAULT_CONFIG: dict[str, str] = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "game_root": (
         "~/Library/Application Support/Steam/steamapps/common/"
         "Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds"
     ),
     "save_dir": "~/Library/Application Support/Baba_Is_You",
     "app_name": "Baba Is You",
+    "input_delay": 0.02,
 }
 
 
@@ -31,6 +32,7 @@ class BabaConfig:
     game_root: Path
     save_dir: Path
     app_name: str
+    input_delay: float
     config_path: Path
 
 
@@ -60,9 +62,13 @@ def load_config(path: Path | None = None) -> BabaConfig:
 
     raw: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
     merged = {**DEFAULT_CONFIG, **raw}
+    input_delay = float(merged["input_delay"])
+    if input_delay < 0:
+        raise SystemExit("input_delay must be non-negative")
     return BabaConfig(
         game_root=expand_path(str(merged["game_root"])),
         save_dir=expand_path(str(merged["save_dir"])),
         app_name=str(merged["app_name"]),
+        input_delay=input_delay,
         config_path=config_path,
     )

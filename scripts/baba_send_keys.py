@@ -136,7 +136,11 @@ def main() -> int:
         "moves",
         help="Comma-separated moves, e.g. 'right*8' or 'right,right,up'",
     )
-    parser.add_argument("--delay", type=float, default=0.5, help="Delay between keys")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        help="Delay between keys. Defaults to input_delay in baba_config.json.",
+    )
     parser.add_argument(
         "--hold-ms",
         type=int,
@@ -173,17 +177,18 @@ def main() -> int:
 
     config = load_config(args.config)
     app_name = args.app_name or config.app_name
+    delay = args.delay if args.delay is not None else config.input_delay
 
     if not args.no_activate:
         activate_game(app_name)
         time.sleep(args.pre_delay)
 
     if args.method == "cgevent":
-        send_with_cgevent(moves, args.delay, args.hold_ms)
+        send_with_cgevent(moves, delay, args.hold_ms)
     else:
         for move in moves:
             send_key_code(KEY_CODES[move])
-            time.sleep(args.delay)
+            time.sleep(delay)
 
     print("frontmost=" + frontmost_process())
     return 0

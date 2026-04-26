@@ -1,5 +1,6 @@
 {
   "game_root": "~/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds",
   "save_dir": "~/Library/Application Support/Baba_Is_You",
-  "app_name": "Baba Is You"
+  "app_name": "Baba Is You",
+  "input_delay": 0.02
 }

@@ -51,12 +51,14 @@ Default config:
 {
   "game_root": "~/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds",
   "save_dir": "~/Library/Application Support/Baba_Is_You",
-  "app_name": "Baba Is You"
+  "app_name": "Baba Is You",
+  "input_delay": 0.02
 }
 ```
 
 `baba_config.json` is ignored by git. Use `BABA_CONFIG=/path/to/config.json` or
 `--config /path/to/config.json` for a different config file.
+Adjust `input_delay` if another machine needs a slower or faster key interval.
 
 ## Basic Usage
 
@@ -78,10 +80,10 @@ Send moves:
 python3 scripts/baba_send_keys.py 'right,left,up'
 ```
 
-`baba_send_keys.py` defaults to a 0.5 second delay between keys and a 90ms
-CoreGraphics key hold because faster or shorter input can miss restart
-confirmation or long routes in Baba Is You. Some route notes may specify a
-larger hold, such as `--hold-ms 140`.
+`baba_send_keys.py` defaults to the configured `input_delay`, currently 0.02
+seconds in `baba_config.example.json`, and a 90ms CoreGraphics key hold. Some
+machines or long routes may need a slower `input_delay`, and some route notes
+may specify a larger hold such as `--hold-ms 140`.
 
 Restart the current level or world-map position:
 
@@ -196,6 +198,8 @@ route search.
 - Validated the interactive method on `189level / now what is this?`; the same
   workflow is usable by smaller models because each step has a narrow,
   state-readable checkpoint.
+- Moved the default key interval into `baba_config.json` as `input_delay`
+  after testing the current level; the checked-in default is `0.02` seconds.
 
 ## Current Limits
 
