@@ -15,7 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from parse_baba_level import DEFAULT_GAME_ROOT, DEFAULT_SAVE_DIR, current_level, read_ini_like
+from baba_config import load_config
+from parse_baba_level import current_level, read_ini_like
 
 
 DIRS = {
@@ -24,6 +25,8 @@ DIRS = {
     "down": (0, 1),
     "up": (0, -1),
 }
+
+ROOT = Path(__file__).resolve().parent
 
 SURROUND_OFFSETS = {
     "r": (1, 0),
@@ -153,21 +156,25 @@ def shortest_path(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("target", nargs="?", help="Target level id, e.g. 1level. Defaults to next unlocked level.")
-    parser.add_argument("--game-root", type=Path, default=DEFAULT_GAME_ROOT)
-    parser.add_argument("--save-dir", type=Path, default=DEFAULT_SAVE_DIR)
+    parser.add_argument("--config", type=Path, help="Path to baba_config.json")
+    parser.add_argument("--game-root", type=Path, help="Override configured Worlds directory")
+    parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
     parser.add_argument("--enter-key", choices=["enter", "confirm"], default="enter")
     parser.add_argument("--execute", action="store_true", help="Send the detected route with baba_send_keys.py")
     args = parser.parse_args()
+    config = load_config(args.config)
+    game_root = args.game_root or config.game_root
+    save_dir = args.save_dir or config.save_dir
 
-    slot, world, _previous = current_level(args.save_dir)
-    save_file = args.save_dir / f"{slot}ba.ba"
+    slot, world, _previous = current_level(save_dir)
+    save_file = save_dir / f"{slot}ba.ba"
     save = read_ini_like(save_file)
     save_section = save.get(world, {})
     map_level = save_section.get("leveltree") or save_section.get("Previous")
     if not map_level:
         raise SystemExit(f"Could not find leveltree/Previous in {save_file} [{world}]")
 
-    ld_path = args.game_root / world / f"{map_level}.ld"
+    ld_path = game_root / world / f"{map_level}.ld"
     sections = read_ini_like(ld_path)
     general = sections.get("general", {})
     selector = (parse_int(general.get("selectorX")), parse_int(general.get("selectorY")))
@@ -234,10 +241,10 @@ def main() -> int:
     print(f"cursor={cursor} source={cursor_source}")
     print(f"target={target} coords={sorted(target_coords)}")
     print("moves=" + ",".join(moves))
-    print(f"command=python3 baba_send_keys.py '{','.join(moves)}'")
+    print(f"command=python3 scripts/baba_send_keys.py '{','.join(moves)}'")
 
     if args.execute:
-        subprocess.run([sys.executable, "baba_send_keys.py", ",".join(moves)], check=True)
+        subprocess.run([sys.executable, str(ROOT / "baba_send_keys.py"), ",".join(moves)], check=True)
 
     return 0
 

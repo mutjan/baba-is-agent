@@ -1,0 +1,17 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Local machine configuration. Generated on first run from baba_config.example.json.
+baba_config.json
+
+# Generated CoreGraphics helper binary.
+baba_cgevent_keys
+scripts/baba_cgevent_keys
+
+# Local run logs and development notes.
+runs/
+dev/
+
+# Unrelated local notes from the original working folder.
+wildermyth_save_reading_method.md

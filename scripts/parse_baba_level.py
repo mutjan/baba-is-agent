@@ -15,12 +15,7 @@ import sys
 import zlib
 from pathlib import Path
 
-
-DEFAULT_GAME_ROOT = Path(
-    "/Users/lzw/Library/Application Support/Steam/steamapps/common/"
-    "Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds"
-)
-DEFAULT_SAVE_DIR = Path("/Users/lzw/Library/Application Support/Baba_Is_You")
+from baba_config import load_config
 
 SYMBOLS = {
     "empty": ".",
@@ -228,21 +223,25 @@ def render_layer(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--game-root", type=Path, default=DEFAULT_GAME_ROOT)
-    parser.add_argument("--save-dir", type=Path, default=DEFAULT_SAVE_DIR)
+    parser.add_argument("--config", type=Path, help="Path to baba_config.json")
+    parser.add_argument("--game-root", type=Path, help="Override configured Worlds directory")
+    parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
     parser.add_argument("--world", help="World folder, such as museum or baba")
     parser.add_argument("--level", help="Level id without extension, such as y128level")
     parser.add_argument("--all-layers", action="store_true", help="Print every map layer")
     args = parser.parse_args()
+    config = load_config(args.config)
+    game_root = args.game_root or config.game_root
+    save_dir = args.save_dir or config.save_dir
 
     if args.world and args.level:
         slot = None
         world = args.world
         level = args.level
     else:
-        slot, world, level = current_level(args.save_dir)
+        slot, world, level = current_level(save_dir)
 
-    level_dir = args.game_root / world
+    level_dir = game_root / world
     ld_path = level_dir / f"{level}.ld"
     l_path = level_dir / f"{level}.l"
     if not ld_path.exists() or not l_path.exists():
@@ -250,7 +249,7 @@ def main() -> int:
 
     level_data = ld_path.read_text(errors="replace")
     general = read_ini_like(ld_path).get("general", {})
-    code_to_name, name_to_symbol = parse_global_tiles(args.game_root.parent / "values.lua")
+    code_to_name, name_to_symbol = parse_global_tiles(game_root.parent / "values.lua")
     level_code_to_name, level_name_to_symbol = parse_currobjlist(level_data)
     code_to_name.update(level_code_to_name)
     name_to_symbol.update(level_name_to_symbol)

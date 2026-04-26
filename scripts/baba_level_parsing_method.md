@@ -6,8 +6,8 @@
 
 ## 数据位置
 
-- 游戏关卡目录：`/Users/lzw/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds`
-- 存档目录：`/Users/lzw/Library/Application Support/Baba_Is_You`
+- 游戏关卡目录：`baba_config.json` 的 `game_root`
+- 存档目录：`baba_config.json` 的 `save_dir`
 - 当前存档槽和世界：`SettingsC.txt` 的 `[savegame] slot` 与 `world`
 - 当前关卡 id：对应槽位文件，比如 `1ba.ba` 中当前 world 段落下的 `Previous`
 
@@ -37,19 +37,19 @@
 解析当前正在玩的关卡：
 
 ```bash
-python3 parse_baba_level.py
+python3 scripts/parse_baba_level.py
 ```
 
 解析指定关卡：
 
 ```bash
-python3 parse_baba_level.py --world museum --level y128level
+python3 scripts/parse_baba_level.py --world museum --level y128level
 ```
 
 输出全部图层：
 
 ```bash
-python3 parse_baba_level.py --world museum --level y128level --all-layers
+python3 scripts/parse_baba_level.py --world museum --level y128level --all-layers
 ```
 
 ## 输出说明
@@ -102,7 +102,7 @@ s text_sink
 当前已验证 `museum/y128level`，关卡名 `reunion`：
 
 ```bash
-python3 parse_baba_level.py --world museum --level y128level
+python3 scripts/parse_baba_level.py --world museum --level y128level
 ```
 
 可正确读出：

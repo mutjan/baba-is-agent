@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+from baba_config import load_config
+
 
 KEY_CODES = {
     "left": 123,
@@ -66,9 +68,9 @@ def parse_moves(raw: str) -> list[str]:
     return moves
 
 
-def activate_game() -> None:
+def activate_game(app_name: str) -> None:
     subprocess.run(
-        ["osascript", "-e", 'tell application "Baba Is You" to activate'],
+        ["osascript", "-e", f'tell application "{app_name}" to activate'],
         check=True,
     )
 
@@ -147,6 +149,8 @@ def main() -> int:
         action="store_true",
         help="Do not activate Baba Is You before sending keys",
     )
+    parser.add_argument("--config", type=Path, help="Path to baba_config.json")
+    parser.add_argument("--app-name", help="Override configured macOS app name")
     args = parser.parse_args()
 
     moves = parse_moves(args.moves)
@@ -155,8 +159,11 @@ def main() -> int:
     if args.dry_run:
         return 0
 
+    config = load_config(args.config)
+    app_name = args.app_name or config.app_name
+
     if not args.no_activate:
-        activate_game()
+        activate_game(app_name)
         time.sleep(0.15)
 
     if args.method == "cgevent":
