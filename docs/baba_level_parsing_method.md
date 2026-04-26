@@ -58,8 +58,8 @@ python3 scripts/parse_baba_level.py --world museum --level y128level --all-layer
 
 - 当前 `world`、`level`、关卡名、地图尺寸、图层数。
 - `Active rules`：横向或纵向成立的 `A IS B` 规则，带起点坐标。
-- 文本地图：第一行是 x 坐标末位，左侧是 y 坐标。
-- `Positions`：每种对象的全部坐标，格式为 `(x,y,L层号)`。
+- 文本地图：第一行是文件坐标的 x 末位，左侧是文件坐标 y。
+- `Positions`：每种对象的全部文件坐标，格式为 `(x,y,L层号)`。文件坐标包含最外圈不可走边框，实际可移动范围是 `x=1..width-2`、`y=1..height-2`。
 
 常用符号：
 
@@ -88,6 +88,8 @@ l text_float
 t text_tele
 s text_sink
 ```
+
+注意：`B` 表示真正的 `baba`，`M` 表示 `brick`。不要把 `brick` 当成可控 Baba。
 
 ## 解题流程
 

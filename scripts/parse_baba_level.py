@@ -30,6 +30,9 @@ SYMBOLS = {
     "door": "D",
     "key": "Y",
     "flag": "G",
+    "skull": "S",
+    "brick": "M",
+    "flower": "*",
     "text_baba": "b",
     "text_keke": "k",
     "text_rock": "r",
@@ -256,10 +259,12 @@ def main() -> int:
     width, height, layers = parse_level_binary(l_path)
     positions = collect_positions(width, height, layers, code_to_name)
     rules = active_rules(width, height, layers, code_to_name)
+    move_bounds = f"x=1..{width - 2} y=1..{height - 2}"
 
     source = f"slot={slot} " if slot is not None else ""
     print(f"{source}world={world} level={level} name={general.get('name', '<unknown>')}")
     print(f"size={width}x{height} layers={len(layers)}")
+    print(f"movement_bounds={move_bounds} (file coordinates; outer border is not walkable)")
     print()
     print("Active rules:")
     for direction, (x, y), first, middle, last in rules:

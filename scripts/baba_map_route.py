@@ -65,6 +65,16 @@ def save_statuses(save_section: dict[str, str]) -> dict[str, int]:
     return statuses
 
 
+def save_map_coords(save_section: dict[str, str], map_level: str) -> dict[tuple[int, int], int]:
+    coords: dict[tuple[int, int], int] = {}
+    prefix = re.escape(map_level)
+    for key, value in save_section.items():
+        match = re.fullmatch(prefix + r",(\d+),(\d+)", key)
+        if match:
+            coords[(int(match.group(1)), int(match.group(2)))] = parse_int(value)
+    return coords
+
+
 def default_target(statuses: dict[str, int], map_level: str) -> str | None:
     candidates = [
         level
@@ -202,7 +212,12 @@ def main() -> int:
         if item.get("file") == target:
             target_coords.add(coord)
 
-    visible_path_coords = set()
+    save_path_coords = {
+        coord
+        for coord, status in save_map_coords(save_section, map_level).items()
+        if status > 0
+    }
+    unlocked_path_coords = set()
     for index, item in paths.items():
         if path_count and index >= path_count:
             continue
@@ -211,7 +226,8 @@ def main() -> int:
             continue
         coord = coord_from_item(item)
         if coord is not None:
-            visible_path_coords.add(coord)
+            unlocked_path_coords.add(coord)
+    visible_path_coords = save_path_coords or unlocked_path_coords
 
     passable = set(visible_path_coords)
     visible_level_coords = set()
