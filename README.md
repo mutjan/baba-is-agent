@@ -6,9 +6,8 @@ Only tested on Codex on macOS.
 
 ## Demo
 
-<video src="demo.mp4" controls width="720"></video>
+https://github.com/user-attachments/assets/5472a146-62ed-472e-8d1a-dbd415f1f6e8
 
-[Watch the demo video](demo.mp4)
 
 ## Why This Exists
 
