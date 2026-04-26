@@ -6,14 +6,17 @@ Default behavior:
 - If the current level has a known route, optionally restart, execute the route,
   time from first sent key until completion evidence is observed, then update
   the route JSON and local runs files.
-- If the current level has no known route, create a local attempt handoff in
-  runs/ so the next agent starts with the state-guided loop instead of guessing.
+- If the current level has no known route, create a local attempt handoff under
+  runs/<run_id>/ so the next agent starts with the state-guided loop instead of
+  guessing.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shlex
 import subprocess
 import sys
@@ -47,13 +50,18 @@ from read_baba_state import current_save_file, load_save_state
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
-RUNS_DIR = ROOT / "runs"
-ACTIVE_ATTEMPT_PATH = RUNS_DIR / "baba_benchmark_active.json"
-RUN_FILES = {
-    "benchmark_log": RUNS_DIR / "baba_benchmark_log.md",
-    "level_notes": RUNS_DIR / "baba_level_notes.md",
-    "learned_rules": RUNS_DIR / "baba_learned_rules.md",
-    "growth_diary": RUNS_DIR / "baba_growth_diary_xiaohongshu.md",
+RUNS_ROOT = ROOT / "runs"
+DEFAULT_RUN_ID = "001_codex_gpt55"
+RUN_FILE_NAMES = {
+    "benchmark_log": "baba_benchmark_log.md",
+    "level_notes": "baba_level_notes.md",
+    "learned_rules": "baba_learned_rules.md",
+    "growth_diary": "baba_growth_diary_xiaohongshu.md",
+}
+RUN_TEMPLATES = {
+    "level_notes": RUNS_ROOT / "baba_level_notes.template.md",
+    "learned_rules": RUNS_ROOT / "baba_learned_rules.template.md",
+    "growth_diary": RUNS_ROOT / "baba_growth_diary_xiaohongshu.template.md",
 }
 
 
@@ -63,6 +71,20 @@ def utc_now() -> datetime:
 
 def iso(dt: datetime) -> str:
     return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def run_dir_for(run_id: str) -> Path:
+    if not re.fullmatch(r"\d{3}_[A-Za-z0-9][A-Za-z0-9_.-]*", run_id):
+        raise SystemExit("run_id must look like 001_codex_gpt55 or 002_claude_sonnet")
+    return RUNS_ROOT / run_id
+
+
+def active_attempt_path(run_dir: Path) -> Path:
+    return run_dir / "baba_benchmark_active.json"
+
+
+def run_files(run_dir: Path) -> dict[str, Path]:
+    return {key: run_dir / name for key, name in RUN_FILE_NAMES.items()}
 
 
 def parse_int(value: str | None) -> int | None:
@@ -236,17 +258,21 @@ def update_route_timing(
     return route
 
 
-def ensure_run_files() -> None:
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+def ensure_run_files(run_dir: Path, files: dict[str, Path]) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
     defaults = {
         "benchmark_log": "# Baba Benchmark Log\n\n",
         "level_notes": "# Baba Is You Level Notes\n\n",
         "learned_rules": "# Baba Is You Learned Rules\n\n",
         "growth_diary": "# 我玩 Baba Is You 的成长日记  by GPT-5.5\n\n",
     }
-    for key, path in RUN_FILES.items():
+    for key, path in files.items():
         if not path.exists():
-            path.write_text(defaults[key], encoding="utf-8")
+            template = RUN_TEMPLATES.get(key)
+            if template is not None and template.exists():
+                path.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+            else:
+                path.write_text(defaults[key], encoding="utf-8")
 
 
 def append(path: Path, text: str) -> None:
@@ -254,8 +280,8 @@ def append(path: Path, text: str) -> None:
         handle.write(text)
 
 
-def update_run_files(record: dict[str, Any]) -> None:
-    ensure_run_files()
+def update_run_files(record: dict[str, Any], run_dir: Path, files: dict[str, Path]) -> None:
+    ensure_run_files(run_dir, files)
     level = record["level"]
     name = record["name"]
     timestamp = record["completed_at"]
@@ -266,7 +292,7 @@ def update_run_files(record: dict[str, Any]) -> None:
     note = record.get("note") or ""
 
     append(
-        RUN_FILES["benchmark_log"],
+        files["benchmark_log"],
         (
             f"## {timestamp} {level} / {name}\n\n"
             f"- result: pass\n"
@@ -277,7 +303,7 @@ def update_run_files(record: dict[str, Any]) -> None:
         ),
     )
     append(
-        RUN_FILES["level_notes"],
+        files["level_notes"],
         (
             f"\n## Benchmark Record: {level} / {name} / {timestamp}\n\n"
             f"已验证路线：\n\n"
@@ -286,7 +312,7 @@ def update_run_files(record: dict[str, Any]) -> None:
         ),
     )
     append(
-        RUN_FILES["learned_rules"],
+        files["learned_rules"],
         (
             f"\n## Benchmark Evidence: {level} / {timestamp}\n\n"
             f"- `{level}` 路线复放通过，证据为 `{evidence}`，用时 `{elapsed}` 秒。\n"
@@ -294,7 +320,7 @@ def update_run_files(record: dict[str, Any]) -> None:
         ),
     )
     append(
-        RUN_FILES["growth_diary"],
+        files["growth_diary"],
         (
             f"\n## 自动素材：{level} / {name}\n\n"
             f"这关本次通关用时 `{elapsed}` 秒，路线共 `{steps}` 步。\n\n"
@@ -303,7 +329,16 @@ def update_run_files(record: dict[str, Any]) -> None:
     )
 
 
-def start_attempt_record(config: Any, save_dir: Path, world: str, level: str, route: dict[str, Any] | None) -> dict[str, Any]:
+def start_attempt_record(
+    config: Any,
+    save_dir: Path,
+    world: str,
+    level: str,
+    route: dict[str, Any] | None,
+    run_dir: Path,
+    files: dict[str, Path],
+    active_path: Path,
+) -> dict[str, Any]:
     started_at = iso(utc_now())
     rules = initial_rules(config, world, level)
     record = {
@@ -316,11 +351,11 @@ def start_attempt_record(config: Any, save_dir: Path, world: str, level: str, ro
         "initial_status": completion_status(save_dir, world, level),
         "initial_rules": rules,
     }
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    ACTIVE_ATTEMPT_PATH.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    ensure_run_files()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    active_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    ensure_run_files(run_dir, files)
     append(
-        RUN_FILES["benchmark_log"],
+        files["benchmark_log"],
         (
             f"## {started_at} started {level} / {record['name']}\n\n"
             f"- status_at_start: `{record['initial_status']}`\n"
@@ -332,9 +367,17 @@ def start_attempt_record(config: Any, save_dir: Path, world: str, level: str, ro
     return record
 
 
-def record_manual_pass(args: argparse.Namespace, config: Any, save_dir: Path, routes_doc: dict[str, Any]) -> None:
-    if ACTIVE_ATTEMPT_PATH.exists():
-        active = json.loads(ACTIVE_ATTEMPT_PATH.read_text(encoding="utf-8"))
+def record_manual_pass(
+    args: argparse.Namespace,
+    config: Any,
+    save_dir: Path,
+    routes_doc: dict[str, Any],
+    run_dir: Path,
+    files: dict[str, Path],
+    active_path: Path,
+) -> None:
+    if active_path.exists():
+        active = json.loads(active_path.read_text(encoding="utf-8"))
     else:
         active = {}
 
@@ -375,9 +418,9 @@ def record_manual_pass(args: argparse.Namespace, config: Any, save_dir: Path, ro
         "world": world,
     }
     if not args.no_run_updates:
-        update_run_files(record)
-    if ACTIVE_ATTEMPT_PATH.exists():
-        ACTIVE_ATTEMPT_PATH.unlink()
+        update_run_files(record, run_dir, files)
+    if active_path.exists():
+        active_path.unlink()
     print(f"recorded_pass level={level} elapsed_seconds={record['elapsed_seconds']}")
 
 
@@ -400,16 +443,24 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Print the planned action without sending keys or writing files")
     parser.add_argument("--record-pass", action="store_true", help="Record an interactively solved level using the active attempt timer")
     parser.add_argument("--allow-without-status", action="store_true", help="Allow --record-pass even if save status is not 3")
-    parser.add_argument("--no-run-updates", action="store_true", help="Do not append local runs/*.md records")
+    parser.add_argument("--no-run-updates", action="store_true", help="Do not append local runs/<run_id>/*.md records")
+    parser.add_argument(
+        "--run-id",
+        default=os.environ.get("BABA_RUN_ID", DEFAULT_RUN_ID),
+        help="Per-agent run directory name, e.g. 001_codex_gpt55.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     save_dir = args.save_dir or config.save_dir
     routes_doc = load_routes(args.routes)
     routes = route_map(routes_doc)
+    run_dir = run_dir_for(args.run_id)
+    files = run_files(run_dir)
+    active_path = active_attempt_path(run_dir)
 
     if args.record_pass:
-        record_manual_pass(args, config, save_dir, routes_doc)
+        record_manual_pass(args, config, save_dir, routes_doc, run_dir, files, active_path)
         return 0
 
     if args.enter_next:
@@ -425,11 +476,11 @@ def main() -> int:
 
     if route is None:
         if not args.dry_run:
-            start_attempt_record(config, save_dir, world, level, None)
-        print(f"started_attempt slot={slot} world={world} level={level} active={ACTIVE_ATTEMPT_PATH}")
+            start_attempt_record(config, save_dir, world, level, None, run_dir, files, active_path)
+        print(f"started_attempt slot={slot} world={world} level={level} active={active_path}")
         print("no_known_route=1")
         print("next_commands=python3 scripts/read_baba_state.py ; python3 scripts/parse_baba_level.py --rules-only ; python3 scripts/baba_try.py '<short segment>'")
-        print("record_command=python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
+        print(f"record_command=python3 scripts/baba_benchmark.py --run-id {args.run_id} --record-pass --moves '<verified full route>' --note '<short summary>'")
         return 0
 
     delay = route_delay(config.input_delay, args.delay)
@@ -475,7 +526,7 @@ def main() -> int:
         "world": world,
     }
     if not args.no_run_updates:
-        update_run_files(record)
+        update_run_files(record, run_dir, files)
     print(f"passed level={level} elapsed_seconds={record['elapsed_seconds']} evidence={evidence}")
     return 0
 

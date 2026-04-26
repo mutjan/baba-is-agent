@@ -9,8 +9,11 @@ baba_config.json
 baba_cgevent_keys
 scripts/baba_cgevent_keys
 
-# Local run logs and development notes.
-runs/
+# Local run logs. Only root templates are published; per-agent run directories
+# such as runs/001_codex_gpt55 stay local.
+runs/*
+!runs/*.template.md
+runs/*/
 dev/
 
 # Unrelated local notes from the original working folder.

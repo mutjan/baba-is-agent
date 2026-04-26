@@ -21,9 +21,12 @@ Continue playing the current save, one level at a time:
 - Do not use web search for solutions. Think locally and use game feedback.
 - Use screenshots only when local parsing and game behavior conflict; screenshots are token-expensive.
 - Use file coordinates only. The file coordinate system includes an outer border; the actual movable range is `x=1..width-2`, `y=1..height-2`.
-- Keep `runs/baba_learned_rules.md` generic. Put machine-readable solved routes
-  in `scripts/baba_known_routes.json` and judgment-heavy level notes in
-  `runs/baba_level_notes.md`.
+- Root `runs/*.template.md` files are the only run files meant for Git.
+  Real records go under `runs/<number_agent_model>/`, for example
+  `runs/001_codex_gpt55/`. Other agents must use their own run id.
+- Keep learned rules generic. Put machine-readable solved routes in
+  `scripts/baba_known_routes.json` and judgment-heavy level notes in the
+  agent-specific run directory.
 
 ## Key Commands
 
@@ -190,9 +193,10 @@ If the player is on the map instead of inside a level, use
 - `scripts/baba_known_routes.json`: route data plus benchmark timing fields.
 - `scripts/baba_play_known_route.py`: prints or executes known routes from JSON.
 - `scripts/baba_benchmark.py`: starts a known-route benchmark or local
-  state-guided attempt record, then updates route timing and `runs/` notes on pass.
-- `runs/baba_learned_rules.md`: generic rules only.
-- `runs/baba_level_notes.md`: level-specific routes and notes.
+  state-guided attempt record, then updates route timing and
+  `runs/<number_agent_model>/` notes on pass.
+- `runs/*.template.md`: publishable templates for per-agent run records.
+- `runs/001_codex_gpt55/`: local records from this Codex/GPT-5.5 run.
 - `docs/baba_level_parsing_method.md`: parser method and coordinate notes.
 - `docs/baba_state_guided_play_method.md`: state-reader-guided play loop and
   script-vs-Markdown boundary.
@@ -222,7 +226,7 @@ If the player is on the map instead of inside a level, use
 
 ## Recent Proven Routes
 
-See `runs/baba_level_notes.md` for details. Most recent:
+See `runs/001_codex_gpt55/baba_level_notes.md` for details. Most recent:
 
 ```text
 209level / lock:

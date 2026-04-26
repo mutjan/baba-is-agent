@@ -3,7 +3,7 @@
 `scripts/baba_search_route.py` is a generic text-rule macro searcher. It should
 not store per-level solved coordinates. Machine-readable solved routes belong
 in `scripts/baba_known_routes.json`; route explanations and failed-branch notes
-belong in `runs/baba_level_notes.md`.
+belong in `runs/<number_agent_model>/baba_level_notes.md`.
 
 ## What Level 6 Taught Us
 

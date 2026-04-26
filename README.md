@@ -176,8 +176,10 @@ python3 scripts/baba_benchmark.py
 The benchmark runner uses `scripts/baba_known_routes.json` when a route is
 known. It times a level from the first sent key until completion evidence is
 read, records timing back into that JSON, and appends local notes under
-`runs/`. If no known route exists, it starts a local attempt record and prints
-the state-guided commands to continue interactively.
+`runs/<number_agent_model>/`. If no known route exists, it starts a local
+attempt record and prints the state-guided commands to continue interactively.
+Use `--run-id 002_agent_model` or `BABA_RUN_ID=002_agent_model` for another
+agent. Only the root `runs/*.template.md` files are intended for Git.
 
 See `docs/baba_state_guided_play_method.md` for the interactive
 state-reader-guided workflow and when to use short experiments instead of full
@@ -201,7 +203,8 @@ route search.
 - `scripts/baba_play_known_route.py`: prints or executes known routes from the
   JSON route data.
 - `scripts/baba_benchmark.py`: handoff entry that runs known routes, measures
-  completion time, and maintains local `runs/` records.
+  completion time, and maintains local per-agent `runs/<number_agent_model>/`
+  records.
 - `lua/codex_state_export.lua`: optional Baba `Data/Lua` hook that stores live
   runtime units and rules in the save file after turns.
 - `lua/codex_state_probe.lua`: minimal canary that checks Baba can load a

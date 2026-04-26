@@ -33,7 +33,8 @@ Write a script when the task is mechanical, repeatable, and safer when exact:
 Do not hard-code level-specific solved routes inside generic Python logic.
 Known solved routes live as data in `scripts/baba_known_routes.json`; the
 generic replay entry is `scripts/baba_play_known_route.py`. Judgment-heavy
-notes still belong in `runs/baba_level_notes.md`.
+notes belong in each agent's run directory, for example
+`runs/001_codex_gpt55/baba_level_notes.md`.
 
 ## What Belongs In Markdown
 
@@ -46,9 +47,9 @@ Write Markdown when the information needs judgment or context:
 - human-facing notes for live play, such as why a move segment is interesting.
 
 Use `docs/` for reusable method. Use `scripts/baba_known_routes.json` for
-machine-readable routes and timing. Use `runs/baba_learned_rules.md` for
-generic play lessons. Use `runs/baba_level_notes.md` for per-level facts,
-hypotheses, and route explanations.
+machine-readable routes and timing. Use root `runs/*.template.md` files as the
+publishable format contract. Real agent records go under
+`runs/<number_agent_model>/`, such as `runs/001_codex_gpt55/`.
 
 ## Benchmark Entry
 
@@ -63,22 +64,23 @@ executes the route, times from the first sent key, stops when completion
 evidence is observed, updates `scripts/baba_known_routes.json`, and appends
 local run records.
 
-If there is no known route, it creates `runs/baba_benchmark_active.json`,
-appends a start record, and prints the state-guided commands to continue with.
-After an interactive solve, record the route with:
+If there is no known route, it creates
+`runs/<number_agent_model>/baba_benchmark_active.json`, appends a start record,
+and prints the state-guided commands to continue with. Other agents should pass
+their own run id, for example `--run-id 002_claude_sonnet`. After an
+interactive solve, record the route with:
 
 ```bash
-python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'
+python3 scripts/baba_benchmark.py --run-id 001_codex_gpt55 --record-pass --moves '<verified full route>' --note '<short summary>'
 ```
 
-For every passed level, keep these four local `runs/` surfaces current:
+For every passed level, keep these four local files current inside that
+agent-specific run directory:
 
-- `runs/baba_benchmark_log.md`: mechanical benchmark facts and evidence.
-- `runs/baba_level_notes.md`: per-level route, checkpoints, coordinates, and result.
-- `runs/baba_learned_rules.md`: reusable lessons, or a note that no new generic
-  lesson was found.
-- `runs/baba_growth_diary_xiaohongshu.md`: human-facing story material from the
-  level.
+- `baba_benchmark_log.md`: mechanical benchmark facts and evidence.
+- `baba_level_notes.md`: per-level route, checkpoints, coordinates, and result.
+- `baba_learned_rules.md`: reusable lessons, or a note that no new generic lesson was found.
+- `baba_growth_diary_xiaohongshu.md`: human-facing story material from the level.
 
 ## Interactive Loop
 
