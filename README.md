@@ -6,15 +6,14 @@ Only tested on Codex on macOS.
 
 ## Why This Exists
 
-This project uses two ideas that proved more reliable than file-polled command
-mods:
+This project reads local Baba Is You files and sends local macOS keyboard
+events:
 
 - Read state from local Baba files: save files tell us the current slot, world,
   map, and level; `.ld` and `.l` files describe level metadata, map layout, and
   object positions.
-- Send input as low-level macOS keyboard events: `CGEventPost(kCGHIDEventTap)`
-  was verified to move Baba, while AppleScript/System Events key presses were
-  accepted by macOS but not reliably consumed by the game.
+- Send input as low-level macOS keyboard events through
+  `CGEventPost(kCGHIDEventTap)`.
 
 The current tools do not edit save files to win levels.
 
@@ -95,8 +94,6 @@ python3 scripts/baba_map_route.py --execute
 - `scripts/baba_cgevent_keys.c`: tiny macOS key-event sender.
 - `scripts/baba_map_route.py`: infers current map cursor and next-level route from save
   and map metadata.
-
-`runs/` and `dev/` are local-only folders and are ignored by git.
 
 ## Current Limits
 
