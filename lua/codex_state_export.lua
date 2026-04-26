@@ -1,24 +1,12 @@
 -- Lightweight live-state exporter for Codex-controlled Baba Is You sessions.
 --
 -- Install this file into the game's Data/Lua directory. The game loads files
--- there through modsupport.lua, then these hooks write the current runtime
--- state to a local JSON file after level load, movement, rule updates, undo,
--- and win events.
+-- there through modsupport.lua, then these hooks store the current runtime
+-- state in the active save file after level load, movement, rule updates,
+-- undo, and win events. This avoids relying on standard Lua io/os/pcall,
+-- which are not available in Baba's embedded Lua runtime.
 
 local CODEX_EXPORT_MARKER = "codex-baba-state-export-v1"
-
-local function default_export_path()
-	local home = "."
-	if os ~= nil and os.getenv ~= nil then
-		home = os.getenv("HOME") or "."
-	end
-	return home .. "/Library/Application Support/Baba_Is_You/codex_state.json"
-end
-
-local export_path = CODEX_STATE_EXPORT_PATH
-if (export_path == nil) or (export_path == "") then
-	export_path = default_export_path()
-end
 
 CodexStateExport = CodexStateExport or {}
 CodexStateExport.turn = CodexStateExport.turn or 0
@@ -26,90 +14,78 @@ CodexStateExport.sequence = CodexStateExport.sequence or 0
 CodexStateExport.last_command = CodexStateExport.last_command or ""
 CodexStateExport.last_player = CodexStateExport.last_player or 0
 
-local function json_escape(value)
-	local text = tostring(value or "")
-	text = string.gsub(text, "\\", "\\\\")
-	text = string.gsub(text, "\"", "\\\"")
-	text = string.gsub(text, "\b", "\\b")
-	text = string.gsub(text, "\f", "\\f")
-	text = string.gsub(text, "\n", "\\n")
-	text = string.gsub(text, "\r", "\\r")
-	text = string.gsub(text, "\t", "\\t")
-	return "\"" .. text .. "\""
-end
-
-local function is_array(value)
-	local count = 0
-	local max_key = 0
-	for key, _ in pairs(value) do
-		if type(key) ~= "number" then
-			return false
-		end
-		if key > max_key then
-			max_key = key
-		end
-		count = count + 1
-	end
-	return max_key == count
-end
-
-local function json_value(value)
-	local value_type = type(value)
-	if value_type == "nil" then
-		return "null"
-	elseif value_type == "string" then
-		return json_escape(value)
-	elseif value_type == "number" then
-		return tostring(value)
-	elseif value_type == "boolean" then
-		return value and "true" or "false"
-	elseif value_type == "table" then
-		local parts = {}
-		if is_array(value) then
-			for i = 1, #value do
-				table.insert(parts, json_value(value[i]))
-			end
-			return "[" .. table.concat(parts, ",") .. "]"
-		end
-		for key, item in pairs(value) do
-			table.insert(parts, json_escape(key) .. ":" .. json_value(item))
-		end
-		table.sort(parts)
-		return "{" .. table.concat(parts, ",") .. "}"
-	end
-	return json_escape(value)
-end
-
 local function read_string(object, index)
-	if (object ~= nil) and (object.strings ~= nil) and (index ~= nil) then
+	if (index ~= nil) and (object ~= nil) and (object.strings ~= nil) then
 		return object.strings[index] or ""
 	end
 	return ""
 end
 
 local function read_value(object, index)
-	if (object ~= nil) and (object.values ~= nil) and (index ~= nil) then
+	if (index ~= nil) and (object ~= nil) and (object.values ~= nil) then
 		return object.values[index]
 	end
 	return nil
 end
 
 local function read_flag(object, index)
-	if (object ~= nil) and (object.flags ~= nil) and (index ~= nil) then
+	if (index ~= nil) and (object ~= nil) and (object.flags ~= nil) then
 		return object.flags[index] == true
 	end
 	return false
 end
 
-local function safe_unit(unitid)
-	if (unitid == nil) or (mmf == nil) or (mmf.newObject == nil) then
+local function safe_unit(unitref)
+	if unitref == nil then
 		return nil
 	end
-	local ok, unit = pcall(mmf.newObject, unitid)
-	if ok then
-		return unit
+	if type(unitref) ~= "number" then
+		return unitref
 	end
-	return nil
+	if (mmf == nil) or (mmf.newObject == nil) then
+		return nil
+	end
+	return mmf.newObject(unitref)
+end
+
+local function unit_runtime_id(unit, fallback)
+	if (unit ~= nil) and (unit.fixed ~= nil) then
+		return unit.fixed
+	end
+	return fallback
+end
+
+local function unit_key(unit, fallback)
+	local id = read_value(unit, ID)
+	if id ~= nil then
+		return "id:" .. tostring(id)
+	end
+	return "fixed:" .. tostring(unit_runtime_id(unit, fallback))
+end
+
+local function fixed_key(value)
+	if fixed_to_str ~= nil then
+		return fixed_to_str(value)
+	end
+	return tostring(value)
+end
+
+local function build_unitmap_lookup()
+	local lookup = {}
+	if (type(unitmap) ~= "table") or (roomsizex == nil) then
+		return lookup
+	end
+
+	for tileid, ids in pairs(unitmap) do
+		if type(ids) == "table" then
+			local y = math.floor(tileid / roomsizex)
+			local x = tileid - y * roomsizex
+			for _, fixedid in ipairs(ids) do
+				lookup[fixed_key(fixedid)] = {x = x, y = y}
+			end
+		end
+	end
+	return lookup
 end
 
 local function word_from_name(name)
@@ -119,36 +95,65 @@ local function word_from_name(name)
 	return nil
 end
 
-local function collect_units()
-	local rows = {}
-	if units == nil then
-		return rows
+local function add_unit_row(rows, seen, coord_lookup, unitref)
+	local unit = safe_unit(unitref)
+	if unit == nil then
+		return
 	end
 
-	for _, unitid in ipairs(units) do
-		local unit = safe_unit(unitid)
-		if unit ~= nil then
-			local name = read_string(unit, UNITNAME)
-			local unit_type = read_string(unit, UNITTYPE)
-			local x = read_value(unit, XPOS)
-			local y = read_value(unit, YPOS)
-			local row = {
-				runtime_id = unitid,
-				id = read_value(unit, ID),
-				name = name,
-				unit_type = unit_type,
-				word = word_from_name(name),
-				x = x,
-				y = y,
-				dir = read_value(unit, DIR),
-				float = read_value(unit, FLOAT),
-				type = read_value(unit, TYPE),
-				zlayer = read_value(unit, ZLAYER),
-				dead = read_flag(unit, DEAD),
-				visible = unit.visible == true,
-			}
-			row.sort_key = tostring(y or 0) .. ":" .. tostring(x or 0) .. ":" .. name .. ":" .. tostring(unitid)
-			table.insert(rows, row)
+	local key = unit_key(unit, unitref)
+	if seen[key] == true then
+		return
+	end
+	seen[key] = true
+
+	local name = read_string(unit, UNITNAME)
+	local unit_type = read_string(unit, UNITTYPE)
+	local x = read_value(unit, XPOS)
+	local y = read_value(unit, YPOS)
+	local mapped = coord_lookup[fixed_key(unitref)] or coord_lookup[fixed_key(unit_runtime_id(unit, unitref))]
+	if mapped ~= nil then
+		x = x or mapped.x
+		y = y or mapped.y
+	end
+
+	local row = {
+		runtime_id = unit_runtime_id(unit, unitref),
+		id = read_value(unit, ID),
+		name = name,
+		unit_type = unit_type,
+		word = word_from_name(name),
+		x = x,
+		y = y,
+		dir = read_value(unit, DIR),
+		float = read_value(unit, FLOAT),
+		type = read_value(unit, TYPE),
+		zlayer = read_value(unit, ZLAYER),
+		dead = read_flag(unit, DEAD),
+		visible = unit.visible == true,
+	}
+	row.sort_key = tostring(y or 0) .. ":" .. tostring(x or 0) .. ":" .. name .. ":" .. tostring(row.id or row.runtime_id)
+	table.insert(rows, row)
+end
+
+local function collect_units()
+	local rows = {}
+	local seen = {}
+	local coord_lookup = build_unitmap_lookup()
+
+	if type(units) == "table" then
+		for _, unitref in ipairs(units) do
+			add_unit_row(rows, seen, coord_lookup, unitref)
+		end
+	end
+
+	if type(unitlists) == "table" then
+		for _, ids in pairs(unitlists) do
+			if type(ids) == "table" then
+				for _, unitid in ipairs(ids) do
+					add_unit_row(rows, seen, coord_lookup, unitid)
+				end
+			end
 		end
 	end
 
@@ -239,15 +244,9 @@ local function collect_feature_index()
 end
 
 local function metadata(source)
-	local now = nil
-	if os ~= nil and os.time ~= nil then
-		now = os.time()
-	end
-
 	return {
 		schema = CODEX_EXPORT_MARKER,
 		source = source,
-		exported_at = now,
 		turn = CodexStateExport.turn,
 		sequence = CodexStateExport.sequence,
 		last_command = CodexStateExport.last_command,
@@ -261,54 +260,106 @@ local function metadata(source)
 	}
 end
 
+local function export_ready()
+	return (type(MF_store) == "function") and (generaldata ~= nil)
+end
+
+local function field(value)
+	local text = tostring(value or "")
+	text = string.gsub(text, "\\", "\\\\")
+	text = string.gsub(text, "\t", "\\t")
+	text = string.gsub(text, "\n", "\\n")
+	text = string.gsub(text, "\r", "\\r")
+	return text
+end
+
+local function join_fields(values, count)
+	local parts = {}
+	for index = 1, count do
+		table.insert(parts, field(values[index]))
+	end
+	return table.concat(parts, "\t")
+end
+
+local function store_value(key, value)
+	MF_store("save", "codex_state", key, tostring(value or ""))
+end
+
+local function store_rows(prefix, rows, encode_row)
+	store_value(prefix .. "_count", #rows)
+	for index, row in ipairs(rows) do
+		store_value(prefix .. "_" .. tostring(index), encode_row(row))
+	end
+end
+
 local function write_export(source)
-	if (io == nil) or (io.open == nil) then
-		print("Codex state export unavailable: Lua io.open is missing")
+	if not export_ready() then
 		return
 	end
 
 	CodexStateExport.sequence = CodexStateExport.sequence + 1
-	local state = {
-		meta = metadata(source),
-		rules = collect_rules(),
-		feature_index = collect_feature_index(),
-		units = collect_units(),
-	}
+	local meta = metadata(source)
+	local rules = collect_rules()
+	local units = collect_units()
+	local feature_index = collect_feature_index()
 
-	local body = json_value(state) .. "\n"
-	local tmp_path = export_path .. ".tmp"
-	local file, err = io.open(tmp_path, "w")
-	if file == nil then
-		print("Codex state export failed opening " .. tmp_path .. ": " .. tostring(err))
-		return
-	end
-	file:write(body)
-	file:close()
+	store_value("schema", CODEX_EXPORT_MARKER)
+	store_value("source", meta.source)
+	store_value("turn", meta.turn)
+	store_value("sequence", meta.sequence)
+	store_value("last_command", meta.last_command)
+	store_value("last_player", meta.last_player)
+	store_value("world", meta.world)
+	store_value("level", meta.level)
+	store_value("level_name", meta.level_name)
+	store_value("room_width", meta.room_width)
+	store_value("room_height", meta.room_height)
+	store_value("last_key", meta.last_key)
 
-	local ok, rename_err = os.rename(tmp_path, export_path)
-	if not ok then
-		os.remove(export_path)
-		ok, rename_err = os.rename(tmp_path, export_path)
-	end
-	if not ok then
-		print("Codex state export failed writing " .. export_path .. ": " .. tostring(rename_err))
-	end
+	store_rows("rule", rules, function(rule)
+		return join_fields({
+			rule.text,
+			rule.target,
+			rule.verb,
+			rule.effect,
+			rule.base and 1 or 0,
+			rule.visible and 1 or 0,
+			rule.condition_count,
+			rule.source_id_count,
+		}, 8)
+	end)
+
+	store_rows("feature", feature_index, function(feature)
+		return join_fields({feature.name, feature.count}, 2)
+	end)
+
+	store_rows("unit", units, function(unit)
+		return join_fields({
+			unit.runtime_id,
+			unit.id,
+			unit.name,
+			unit.unit_type,
+			unit.word,
+			unit.x,
+			unit.y,
+			unit.dir,
+			unit.float,
+			unit.type,
+			unit.zlayer,
+			unit.dead and 1 or 0,
+			unit.visible and 1 or 0,
+		}, 13)
+	end)
 end
 
 local function safe_export(source)
-	local ok, err = pcall(write_export, source)
-	if not ok then
-		print("Codex state export error: " .. tostring(err))
-	end
+	write_export(source)
 end
 
 local function register_hook(name, callback)
 	if (mod_hook_functions ~= nil) and (mod_hook_functions[name] ~= nil) then
 		table.insert(mod_hook_functions[name], function(extra)
-			local ok, err = pcall(callback, extra or {})
-			if not ok then
-				print("Codex state export hook error in " .. name .. ": " .. tostring(err))
-			end
+			callback(extra or {})
 		end)
 	end
 end
@@ -362,4 +413,4 @@ register_hook("level_win_after", function()
 	safe_export("level_win_after")
 end)
 
-print("Codex state exporter active: " .. export_path)
+print("Codex state exporter active: save/codex_state")

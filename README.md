@@ -95,11 +95,38 @@ Install the live runtime state exporter:
 python3 scripts/install_baba_state_exporter.py
 ```
 
-Then restart Baba Is You so the game loads `Data/Lua/codex_state_export.lua`.
-After each level start or turn, read the latest runtime state:
+By default this installs only `Data/Lua/codex_state_export.lua`, because Baba
+already loads Lua files from that directory. It does not patch `modsupport.lua`
+or `syntax.lua`. Restart Baba Is You after installing, then read the latest
+runtime state from the current save file's `[codex_state]` group:
 
 ```bash
 python3 scripts/read_baba_state.py
+```
+
+When entering a level from a fresh game launch, the menu-to-map transition can
+swallow immediate input. Use `enter,enter`, wait about 3 seconds, then send
+`enter` again before expecting level state.
+
+Before installing the full exporter, use the minimal probe to verify Baba's
+`Data/Lua` loading and `world_data.txt` write path:
+
+```bash
+python3 scripts/install_baba_state_exporter.py --probe
+python3 scripts/read_baba_probe.py
+```
+
+The probe writes only the `[codex_probe]` section in
+`Data/Worlds/<world>/world_data.txt`. Remove it with:
+
+```bash
+python3 scripts/install_baba_state_exporter.py --probe --uninstall
+```
+
+Send one or more moves and wait for the exporter after each move:
+
+```bash
+python3 scripts/baba_step.py 'right,up'
 ```
 
 Detect a route from the current world map cursor to the next unlocked level:
@@ -132,10 +159,17 @@ python3 scripts/baba_search_route.py --make-rule flag is win
   and map metadata.
 - `scripts/baba_search_route.py`: generic macro-push searcher for building text
   rules from the current level state.
-- `lua/codex_state_export.lua`: optional Baba `Data/Lua` hook that exports live
-  runtime units and rules to JSON after turns.
+- `lua/codex_state_export.lua`: optional Baba `Data/Lua` hook that stores live
+  runtime units and rules in the save file after turns.
+- `lua/codex_state_probe.lua`: minimal canary that checks Baba can load a
+  `Data/Lua` file and write `[codex_probe]` into `world_data.txt`.
 - `scripts/install_baba_state_exporter.py`: installs or removes the Lua exporter.
-- `scripts/read_baba_state.py`: prints the latest exported runtime state.
+- `scripts/read_baba_probe.py`: reads the minimal probe result from
+  `world_data.txt`.
+- `scripts/read_baba_state.py`: prints the latest exported runtime state from
+  the save group, with legacy JSON fallback.
+- `scripts/baba_step.py`: sends moves one at a time and waits for fresh live
+  state after each turn.
 
 ## Current Limits
 
@@ -143,7 +177,7 @@ python3 scripts/baba_search_route.py --make-rule flag is win
 - Static level parsing reads the initial level layout, not live per-turn object
   state after arbitrary moves.
 - Live per-turn object positions require the optional Lua exporter. Input remains
-  CGEvent-based; the Lua file only writes current game state.
+  CGEvent-based; the Lua file only writes current game state into the save file.
 
 ## Safety Notes
 
@@ -152,3 +186,7 @@ python3 scripts/baba_search_route.py --make-rule flag is win
 - Do not rely on screenshot verification in Codex for this game; use save files,
   parser output, the live state exporter, or direct user observation.
 - Keep `baba_config.json` local. It may contain machine-specific paths.
+- If a Lua exporter experiment breaks startup, run
+  `python3 scripts/install_baba_state_exporter.py --uninstall`, then restart the
+  game. The default installer avoids core-script patching; `--patch-loader` and
+  `--patch-command-loader` are advanced recovery/debug switches only.

@@ -62,10 +62,37 @@ Install live state exporter:
 python3 scripts/install_baba_state_exporter.py
 ```
 
-Restart Baba Is You after installing, then read live exported state:
+This installs only `Data/Lua/codex_state_export.lua` by default. It deliberately
+does not patch `Data/modsupport.lua` or `Data/syntax.lua`; those switches exist
+only for advanced debugging. Restart Baba Is You after installing, then read the
+state stored in the current save file's `[codex_state]` group:
 
 ```bash
 python3 scripts/read_baba_state.py
+```
+
+After a fresh launch, enter a level with `enter,enter`, wait about 3 seconds for
+the menu-to-map transition, then send `enter` again. Reading state too early can
+correctly show the world map rather than the level.
+
+Safer canary before the full exporter:
+
+```bash
+python3 scripts/install_baba_state_exporter.py --probe
+python3 scripts/read_baba_probe.py
+```
+
+The probe only writes `[codex_probe]` in `Data/Worlds/<world>/world_data.txt`.
+Remove it with:
+
+```bash
+python3 scripts/install_baba_state_exporter.py --probe --uninstall
+```
+
+For turn-by-turn feedback, send moves through the state-aware wrapper:
+
+```bash
+python3 scripts/baba_step.py 'right,up'
 ```
 
 Restart current level when stuck:
@@ -120,8 +147,11 @@ At the time of this update it reported `target=15level`, `cursor=(16, 7) source=
 - `scripts/baba_send_keys.py`: verified CGEvent key sender.
 - `scripts/baba_map_route.py`: map route detector; good but still verify cursor source.
 - `lua/codex_state_export.lua`: optional live-state exporter loaded by Baba from `Data/Lua`.
+- `lua/codex_state_probe.lua`: minimal canary for `Data/Lua` loading and `world_data.txt` writes.
 - `scripts/install_baba_state_exporter.py`: installs/uninstalls the exporter.
-- `scripts/read_baba_state.py`: reads the current exported JSON state.
+- `scripts/read_baba_probe.py`: reads the canary result from `world_data.txt`.
+- `scripts/read_baba_state.py`: reads the current exported save-group state, with legacy JSON fallback.
+- `scripts/baba_step.py`: sends each move and waits for the live state to update.
 - `runs/baba_learned_rules.md`: generic rules only.
 - `runs/baba_level_notes.md`: level-specific routes and notes.
 - `docs/baba_level_parsing_method.md`: parser method and coordinate notes.
@@ -133,6 +163,9 @@ At the time of this update it reported `target=15level`, `cursor=(16, 7) source=
 - A level is complete only when its save field becomes `3`.
 - Use the default `0.5s` delay between key presses. For long routes, keep the cgevent hold at least `90ms`; route notes may specify a higher hold such as `140ms`.
 - Expand `AND` rules when restating initial rules, e.g. `BABA IS YOU AND SINK` means both `BABA IS YOU` and `BABA IS SINK`.
+- If Lua exporter work causes startup errors, immediately run
+  `python3 scripts/install_baba_state_exporter.py --uninstall` and restart Baba
+  before doing more experiments.
 - Text blocks are pushable by default.
 - `B` in parser output means real `baba`; `M` means `brick`.
 - Do not treat the outer border as walkable.
