@@ -52,13 +52,25 @@ Default config:
   "game_root": "~/Library/Application Support/Steam/steamapps/common/Baba Is You/Baba Is You.app/Contents/Resources/Data/Worlds",
   "save_dir": "~/Library/Application Support/Baba_Is_You",
   "app_name": "Baba Is You",
-  "input_delay": 0.02
+  "input_delay": 0.02,
+  "game_files_found": false,
+  "state_exporter_installed": false
 }
 ```
 
 `baba_config.json` is ignored by git. Use `BABA_CONFIG=/path/to/config.json` or
 `--config /path/to/config.json` for a different config file.
 Adjust `input_delay` if another machine needs a slower or faster key interval.
+The generated config refreshes `game_files_found` and
+`state_exporter_installed` from the local filesystem. Treat
+`state_exporter_installed=true` as the "game is already modded" flag and do not
+rerun the exporter installer unless you are intentionally repairing it.
+
+Refresh and inspect local config status:
+
+```bash
+python3 scripts/baba_config.py
+```
 
 ## Basic Usage
 
@@ -155,13 +167,26 @@ Search for a text-rule route, such as building `FLAG IS WIN`:
 python3 scripts/baba_search_route.py --make-rule flag is win
 ```
 
+Run the benchmark entry for a new agent handoff:
+
+```bash
+python3 scripts/baba_benchmark.py
+```
+
+The benchmark runner uses `scripts/baba_known_routes.json` when a route is
+known. It times a level from the first sent key until completion evidence is
+read, records timing back into that JSON, and appends local notes under
+`runs/`. If no known route exists, it starts a local attempt record and prints
+the state-guided commands to continue interactively.
+
 See `docs/baba_state_guided_play_method.md` for the interactive
 state-reader-guided workflow and when to use short experiments instead of full
 route search.
 
 ## Tools
 
-- `scripts/baba_config.py`: shared config loader and first-run config creation.
+- `scripts/baba_config.py`: shared config loader, first-run config creation, and
+  local game/exporter status detection.
 - `scripts/parse_baba_level.py`: reads save state, `.ld`, `.l`, and `values.lua`, then
   prints rules, a text map, object positions, and raw object directions for
   `MOVE` reasoning.
@@ -171,6 +196,12 @@ route search.
   and map metadata.
 - `scripts/baba_search_route.py`: generic macro-push searcher for building text
   rules from the current level state.
+- `scripts/baba_known_routes.json`: machine-readable known routes plus benchmark
+  timing fields.
+- `scripts/baba_play_known_route.py`: prints or executes known routes from the
+  JSON route data.
+- `scripts/baba_benchmark.py`: handoff entry that runs known routes, measures
+  completion time, and maintains local `runs/` records.
 - `lua/codex_state_export.lua`: optional Baba `Data/Lua` hook that stores live
   runtime units and rules in the save file after turns.
 - `lua/codex_state_probe.lua`: minimal canary that checks Baba can load a
@@ -200,6 +231,11 @@ route search.
   state-readable checkpoint.
 - Moved the default key interval into `baba_config.json` as `input_delay`
   after testing the current level; the checked-in default is `0.02` seconds.
+- Added `scripts/baba_benchmark.py` and moved known solved routes into
+  `scripts/baba_known_routes.json` so a new agent can start from one entry,
+  replay known routes, time completion, and write local run records.
+- Added config status detection so generated `baba_config.json` records whether
+  Baba game files exist and whether the Lua state exporter is already installed.
 
 ## Current Limits
 

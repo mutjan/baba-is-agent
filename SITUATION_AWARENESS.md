@@ -21,7 +21,9 @@ Continue playing the current save, one level at a time:
 - Do not use web search for solutions. Think locally and use game feedback.
 - Use screenshots only when local parsing and game behavior conflict; screenshots are token-expensive.
 - Use file coordinates only. The file coordinate system includes an outer border; the actual movable range is `x=1..width-2`, `y=1..height-2`.
-- Keep `runs/baba_learned_rules.md` generic. Put level-specific routes and notes in `runs/baba_level_notes.md`.
+- Keep `runs/baba_learned_rules.md` generic. Put machine-readable solved routes
+  in `scripts/baba_known_routes.json` and judgment-heavy level notes in
+  `runs/baba_level_notes.md`.
 
 ## Key Commands
 
@@ -30,6 +32,16 @@ Read current level:
 ```bash
 python3 scripts/parse_baba_level.py
 ```
+
+Inspect local config and mod status:
+
+```bash
+python3 scripts/baba_config.py
+```
+
+If `game_files_found=false`, fix `game_root` before parsing levels. If
+`state_exporter_installed=true`, the Lua state exporter is already installed;
+do not run the installer again unless repairing or uninstalling.
 
 Read only the initial rules:
 
@@ -115,8 +127,14 @@ This same restart helper works both inside a level and on the world map.
 Known route lookup:
 
 ```bash
-PYTHONPATH=scripts python3 runs/baba_play_known_route.py --list
-PYTHONPATH=scripts python3 runs/baba_play_known_route.py --level 2level
+python3 scripts/baba_play_known_route.py --list
+python3 scripts/baba_play_known_route.py --level 2level
+```
+
+Benchmark handoff entry:
+
+```bash
+python3 scripts/baba_benchmark.py
 ```
 
 Constrained route search:
@@ -156,6 +174,8 @@ If the player is on the map instead of inside a level, use
 ## Files To Know
 
 - `README.md`: repo overview.
+- `scripts/baba_config.py`: local config creator/status refresher. It updates
+  `game_files_found` and `state_exporter_installed` in ignored config.
 - `scripts/parse_baba_level.py`: static parser for current/specific levels.
 - `scripts/baba_send_keys.py`: verified CGEvent key sender.
 - `scripts/baba_map_route.py`: map route detector; good but still verify cursor source.
@@ -167,6 +187,10 @@ If the player is on the map instead of inside a level, use
 - `scripts/baba_step.py`: sends each move and waits for the live state to update.
 - `scripts/baba_try.py`: sends a short action segment and prints state deltas for
   rules, moved units, disappeared units, and completion status.
+- `scripts/baba_known_routes.json`: route data plus benchmark timing fields.
+- `scripts/baba_play_known_route.py`: prints or executes known routes from JSON.
+- `scripts/baba_benchmark.py`: starts a known-route benchmark or local
+  state-guided attempt record, then updates route timing and `runs/` notes on pass.
 - `runs/baba_learned_rules.md`: generic rules only.
 - `runs/baba_level_notes.md`: level-specific routes and notes.
 - `docs/baba_level_parsing_method.md`: parser method and coordinate notes.

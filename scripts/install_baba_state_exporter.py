@@ -9,13 +9,19 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from baba_config import PROJECT_ROOT, load_config
+from baba_config import (
+    PROJECT_ROOT,
+    STATE_EXPORTER_MARKER,
+    STATE_EXPORTER_TARGET_NAME,
+    load_config,
+    refresh_config_status,
+)
 from parse_baba_level import current_level
 
 
 SOURCE_PATH = PROJECT_ROOT / "lua" / "codex_state_export.lua"
-TARGET_NAME = "codex_state_export.lua"
-MARKER = "codex-baba-state-export-v1"
+TARGET_NAME = STATE_EXPORTER_TARGET_NAME
+MARKER = STATE_EXPORTER_MARKER
 PROBE_SOURCE_PATH = PROJECT_ROOT / "lua" / "codex_state_probe.lua"
 PROBE_TARGET_NAME = "codex_state_probe.lua"
 PROBE_MARKER = "codex-baba-state-probe-v1"
@@ -273,7 +279,7 @@ def main() -> int:
     if args.probe and (args.patch_loader or args.patch_command_loader):
         raise SystemExit("--probe never patches modsupport.lua or syntax.lua")
 
-    config = load_config(args.config)
+    config = load_config(args.config, refresh_status=not args.dry_run)
     game_root = args.game_root or config.game_root
     save_dir = args.save_dir or config.save_dir
     data_dir = game_root.parent
@@ -303,6 +309,10 @@ def main() -> int:
             result |= uninstall(probe_target, dry_run=args.dry_run, force=args.force, marker=PROBE_MARKER)
             result |= uninstall_loader(data_dir, dry_run=args.dry_run)
             result |= uninstall_command_loader(data_dir, dry_run=args.dry_run)
+        if not args.dry_run:
+            refreshed = refresh_config_status(config.config_path)
+            print(f"game_files_found={refreshed['game_files_found']}")
+            print(f"state_exporter_installed={refreshed['state_exporter_installed']}")
         return result
 
     rendered = render_source(source_path)
@@ -313,6 +323,10 @@ def main() -> int:
         result |= install_loader(data_dir, dry_run=args.dry_run)
     if args.patch_command_loader:
         result |= install_command_loader(data_dir, dry_run=args.dry_run)
+    if not args.dry_run:
+        refreshed = refresh_config_status(config.config_path)
+        print(f"game_files_found={refreshed['game_files_found']}")
+        print(f"state_exporter_installed={refreshed['state_exporter_installed']}")
     return result
 
 
