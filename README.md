@@ -6,6 +6,8 @@ Only tested on Codex on macOS.
 
 ## Demo
 
+<video src="demo.mp4" controls width="720"></video>
+
 [Watch the demo video](demo.mp4)
 
 ## Why This Exists
