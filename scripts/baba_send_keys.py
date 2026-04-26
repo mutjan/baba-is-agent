@@ -149,6 +149,12 @@ def main() -> int:
         action="store_true",
         help="Do not activate Baba Is You before sending keys",
     )
+    parser.add_argument(
+        "--pre-delay",
+        type=float,
+        default=0.15,
+        help="Delay after activating Baba Is You before sending the first key",
+    )
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--app-name", help="Override configured macOS app name")
     args = parser.parse_args()
@@ -164,7 +170,7 @@ def main() -> int:
 
     if not args.no_activate:
         activate_game(app_name)
-        time.sleep(0.15)
+        time.sleep(args.pre_delay)
 
     if args.method == "cgevent":
         send_with_cgevent(moves, args.delay)
