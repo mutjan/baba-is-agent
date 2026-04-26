@@ -85,8 +85,12 @@ PYTHONPATH=scripts python3 runs/baba_play_known_route.py --level 2level
 Constrained route search:
 
 ```bash
-python3 scripts/baba_search_route.py --world baba --level 6level
+python3 scripts/baba_search_route.py --make-rule flag is win
 ```
+
+This script is generic. It uses Level 6's reusable method: derive blockers from
+active rules, search only relevant movable text, preserve YOU, and widen
+`--pattern-margin` only if the small-window search fails.
 
 ## Current Save Snapshot
 

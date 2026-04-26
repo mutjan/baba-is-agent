@@ -112,6 +112,12 @@ Execute that detected route:
 python3 scripts/baba_map_route.py --execute
 ```
 
+Search for a text-rule route, such as building `FLAG IS WIN`:
+
+```bash
+python3 scripts/baba_search_route.py --make-rule flag is win
+```
+
 ## Tools
 
 - `scripts/baba_config.py`: shared config loader and first-run config creation.
@@ -121,6 +127,8 @@ python3 scripts/baba_map_route.py --execute
 - `scripts/baba_cgevent_keys.c`: tiny macOS key-event sender.
 - `scripts/baba_map_route.py`: infers current map cursor and next-level route from save
   and map metadata.
+- `scripts/baba_search_route.py`: generic macro-push searcher for building text
+  rules from the current level state.
 - `lua/codex_state_export.lua`: optional Baba `Data/Lua` hook that exports live
   runtime units and rules to JSON after turns.
 - `scripts/install_baba_state_exporter.py`: installs or removes the Lua exporter.
