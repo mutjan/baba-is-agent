@@ -25,10 +25,20 @@ The reusable lessons from `6level / grass yard` are:
 
 ## Typical Workflow
 
-Analyze the current derived search problem:
+Analyze the current derived search problem. This prints initial rules plus
+rule mobility: which initial rule text can be pushed, and whether each push
+keeps the current `YOU` rule alive.
 
 ```bash
 python3 scripts/baba_search_route.py --analyze
+```
+
+Read mobility markers as:
+
+```text
+right*  # push right and current YOU remains active
+down!   # push down but current YOU breaks
+fixed   # no currently reachable legal push for this rule text
 ```
 
 Try the default target, `FLAG IS WIN`:

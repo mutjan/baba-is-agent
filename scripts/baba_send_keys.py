@@ -108,10 +108,10 @@ def ensure_cgevent_helper() -> Path:
     return binary
 
 
-def send_with_cgevent(moves: list[str], delay: float) -> None:
+def send_with_cgevent(moves: list[str], delay: float, hold_ms: int) -> None:
     binary = ensure_cgevent_helper()
     subprocess.run(
-        [str(binary), "--delay-ms", str(int(delay * 1000)), *moves],
+        [str(binary), "--delay-ms", str(int(delay * 1000)), "--hold-ms", str(hold_ms), *moves],
         check=True,
     )
 
@@ -137,6 +137,12 @@ def main() -> int:
         help="Comma-separated moves, e.g. 'right*8' or 'right,right,up'",
     )
     parser.add_argument("--delay", type=float, default=0.5, help="Delay between keys")
+    parser.add_argument(
+        "--hold-ms",
+        type=int,
+        default=90,
+        help="Milliseconds to hold each key when using the cgevent method",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print without sending")
     parser.add_argument(
         "--method",
@@ -173,7 +179,7 @@ def main() -> int:
         time.sleep(args.pre_delay)
 
     if args.method == "cgevent":
-        send_with_cgevent(moves, args.delay)
+        send_with_cgevent(moves, args.delay, args.hold_ms)
     else:
         for move in moves:
             send_key_code(KEY_CODES[move])

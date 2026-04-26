@@ -93,6 +93,13 @@ class SearchProblem:
 State = tuple[tuple[int, int], tuple[tuple[int, int], ...]]
 
 
+@dataclass(frozen=True)
+class PushOption:
+    move: str
+    preserves_you: bool
+    resulting_rules: tuple[tuple[str, str], ...]
+
+
 def compress_moves(route: list[str]) -> str:
     parts: list[list[str | int]] = []
     for move in route:
@@ -157,6 +164,10 @@ def text_at(units: tuple[TextUnit, ...], coord: tuple[int, int]) -> TextUnit | N
     return None
 
 
+def text_unit_map(units: tuple[TextUnit, ...]) -> dict[tuple[int, int], TextUnit]:
+    return {unit.coord: unit for unit in units}
+
+
 def current_you_rule(level: LevelData, units: tuple[TextUnit, ...]) -> tuple[str, tuple[TextUnit, TextUnit, TextUnit]]:
     you_rules = [rule for rule in level.rules if rule[4] == "you"]
     if not you_rules:
@@ -178,6 +189,168 @@ def one_object_coord(level: LevelData, name: str) -> tuple[int, int]:
         raise SystemExit(f"Expected exactly one current YOU object '{name}', found {len(coords)}")
     x, y, _layer = coords[0]
     return (x, y)
+
+
+def text_rules_from_coords(
+    units: tuple[TextUnit, ...],
+    coords_by_label: dict[str, Coord],
+) -> tuple[tuple[str, str], ...]:
+    words_by_coord: dict[Coord, list[str]] = defaultdict(list)
+    for unit in units:
+        words_by_coord[coords_by_label[unit.label]].append(unit.word)
+
+    rules: set[tuple[str, str]] = set()
+    for coord, first_words in words_by_coord.items():
+        x, y = coord
+        for _name, (dx, dy) in (("right", (1, 0)), ("down", (0, 1))):
+            middle = (x + dx, y + dy)
+            last = (x + 2 * dx, y + 2 * dy)
+            if "is" not in words_by_coord.get(middle, []):
+                continue
+            for first in first_words:
+                for prop in words_by_coord.get(last, []):
+                    rules.add((first, prop))
+    return tuple(sorted(rules))
+
+
+def initial_rule_units(
+    level: LevelData,
+    units: tuple[TextUnit, ...],
+) -> list[tuple[str, tuple[int, int], str, str, str, tuple[TextUnit, TextUnit, TextUnit]]]:
+    result = []
+    for direction, start, first, middle, last in level.rules:
+        coords = rule_coords(direction, start)
+        mapped = tuple(text_at(units, coord) for coord in coords)
+        if any(unit is None for unit in mapped):
+            continue
+        first_unit, middle_unit, last_unit = mapped
+        assert first_unit is not None and middle_unit is not None and last_unit is not None
+        result.append((direction, start, first, middle, last, (first_unit, middle_unit, last_unit)))
+    return result
+
+
+def object_coords(level: LevelData, names: set[str]) -> set[Coord]:
+    coords: set[Coord] = set()
+    for name in names:
+        coords.update((x, y) for x, y, _layer in level.positions.get(name, []))
+    return coords
+
+
+def initial_rule_sets(level: LevelData) -> tuple[set[str], set[str], set[str], set[str]]:
+    stop_subjects = {first for _direction, _start, first, _middle, last in level.rules if last == "stop"}
+    hot_subjects = {first for _direction, _start, first, _middle, last in level.rules if last == "hot"}
+    melt_subjects = {first for _direction, _start, first, _middle, last in level.rules if last == "melt"}
+    defeat_subjects = {first for _direction, _start, first, _middle, last in level.rules if last == "defeat"}
+    return stop_subjects, hot_subjects, melt_subjects, defeat_subjects
+
+
+def actor_blockers(level: LevelData, actor_name: str, units: tuple[TextUnit, ...]) -> set[Coord]:
+    stop_subjects, hot_subjects, melt_subjects, defeat_subjects = initial_rule_sets(level)
+    blockers = object_coords(level, stop_subjects | defeat_subjects)
+    if actor_name in melt_subjects:
+        blockers.update(object_coords(level, hot_subjects))
+    blockers.update(unit.coord for unit in units)
+    return blockers
+
+
+def push_blockers(level: LevelData) -> set[Coord]:
+    stop_subjects, _hot_subjects, _melt_subjects, _defeat_subjects = initial_rule_sets(level)
+    return object_coords(level, stop_subjects)
+
+
+def reachable_initial_actor(
+    level: LevelData,
+    actor_name: str,
+    start: Coord,
+    units: tuple[TextUnit, ...],
+) -> set[Coord]:
+    blockers = actor_blockers(level, actor_name, units)
+    queue = deque([start])
+    seen = {start}
+    while queue:
+        coord = queue.popleft()
+        for _name, (dx, dy) in DIRS:
+            nxt = (coord[0] + dx, coord[1] + dy)
+            if (
+                nxt in seen
+                or not (1 <= nxt[0] <= level.width - 2 and 1 <= nxt[1] <= level.height - 2)
+                or nxt in blockers
+            ):
+                continue
+            seen.add(nxt)
+            queue.append(nxt)
+    return seen
+
+
+def initial_push_options(
+    level: LevelData,
+    actor_name: str,
+    start: Coord,
+    units: tuple[TextUnit, ...],
+    unit: TextUnit,
+) -> tuple[PushOption, ...]:
+    reachable = reachable_initial_actor(level, actor_name, start, units)
+    coord_to_unit = text_unit_map(units)
+    text_coords = set(coord_to_unit)
+    blockers = push_blockers(level)
+    base_coords = {candidate.label: candidate.coord for candidate in units}
+    options: list[PushOption] = []
+
+    for move, (dx, dy) in DIRS:
+        stand = (unit.coord[0] - dx, unit.coord[1] - dy)
+        if stand not in reachable:
+            continue
+
+        chain: list[TextUnit] = []
+        cursor = unit.coord
+        while cursor in coord_to_unit:
+            chain.append(coord_to_unit[cursor])
+            cursor = (cursor[0] + dx, cursor[1] + dy)
+        if (
+            not (1 <= cursor[0] <= level.width - 2 and 1 <= cursor[1] <= level.height - 2)
+            or cursor in blockers
+            or cursor in text_coords
+        ):
+            continue
+
+        next_coords = dict(base_coords)
+        for chain_unit in chain:
+            x, y = next_coords[chain_unit.label]
+            next_coords[chain_unit.label] = (x + dx, y + dy)
+        next_rules = text_rules_from_coords(units, next_coords)
+        options.append(
+            PushOption(
+                move=move,
+                preserves_you=(actor_name, "you") in next_rules,
+                resulting_rules=next_rules,
+            )
+        )
+    return tuple(options)
+
+
+def rule_mobility_lines(level: LevelData) -> list[str]:
+    units = text_units(level.positions)
+    actor_name, _you_units = current_you_rule(level, units)
+    start = one_object_coord(level, actor_name)
+    lines = [f"rule_mobility_actor={actor_name}@{start}"]
+    for direction, start_coord, first, middle, last, rule_units in initial_rule_units(level, units):
+        option_bits = []
+        for unit in rule_units:
+            options = initial_push_options(level, actor_name, start, units, unit)
+            if not options:
+                continue
+            moves = ",".join(
+                f"{option.move}{'*' if option.preserves_you else '!'}"
+                for option in options
+            )
+            option_bits.append(f"{unit.word}#{unit.label.split('#')[-1]}@{unit.coord}:{moves}")
+        status = "fixed" if not option_bits else "pushable"
+        lines.append(
+            f"  {direction} {start_coord}: {first} is {last} -> {status}"
+            + (f" ({'; '.join(option_bits)})" if option_bits else "")
+        )
+    lines.append("  legend: '*' keeps current YOU active; '!' breaks current YOU")
+    return lines
 
 
 def all_rule_triples(
@@ -562,6 +735,9 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
 def print_analysis(problem: SearchProblem) -> None:
     print(f"world={problem.level.world} level={problem.level.level} name={problem.level.name}")
     print("initial_rules=" + "; ".join(f"{a} {b} {c}" for _d, _p, a, b, c in problem.level.rules))
+    print("initial_rule_mobility:")
+    for line in rule_mobility_lines(problem.level):
+        print(line)
     print(f"current_you={problem.actor_name} is you actor={problem.start_actor}")
     print(f"goal={problem.config.goal_subject} is {problem.config.goal_property}")
     print("selected_text=" + ", ".join(f"{unit.label}:{unit.word}@{unit.coord}" for unit in problem.selected))

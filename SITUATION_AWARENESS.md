@@ -9,8 +9,9 @@ Continue playing the current save, one level at a time:
 1. Confirm the real current state from save files.
 2. Enter the next level from the map only after verifying the real cursor.
 3. After entering any new level, read and restate its initial active rules before solving.
-4. Solve by combining parser output with short in-game feedback loops.
-5. Verify success from save status, not from command exit codes.
+4. Run the rule-mobility analysis: identify which initial text rules can actually be pushed, and which pushes preserve the current `YOU` rule.
+5. Solve by combining parser output with short in-game feedback loops.
+6. Verify success from save status, not from command exit codes.
 
 ## Important User Preferences
 
@@ -85,6 +86,7 @@ PYTHONPATH=scripts python3 runs/baba_play_known_route.py --level 2level
 Constrained route search:
 
 ```bash
+python3 scripts/baba_search_route.py --analyze
 python3 scripts/baba_search_route.py --make-rule flag is win
 ```
 
@@ -98,17 +100,18 @@ At the time this handoff was written:
 
 - `slot=2`
 - `world=baba`
-- `Previous=6level`
-- Completed: `0level=3`, `1level=3`, `2level=3`, `3level=3`, `5level=3`, `6level=3`
-- Uncompleted/unlocked seen in save: `90level=2`, `177level=2`, `189level=2`
+- `Previous=209level`
+- `leveltree=106level,177level`
+- Completed: `0level=3`, `1level=3`, `2level=3`, `3level=3`, `4level=3`, `5level=3`, `6level=3`, `10level=3`, `20level=3`, `90level=3`, `93level=3`, `209level=3`, `212level=3`
+- Uncompleted/unlocked seen in save: `8level=2`, `15level=2`, `189level=2`, `210level=2`, `211level=2`, `177level=2`
 
-The player has just completed `6level / grass yard`; `90level` is newly unlocked. Before executing any map route, re-run:
+The player has just completed `209level / lock` inside `177level / 1. the lake`; `15level`, `8level`, `210level`, `211level`, `189level`, and `177level` are still unlocked. Before executing any map route, re-run:
 
 ```bash
 python3 scripts/baba_map_route.py
 ```
 
-If it reports `source=selector fallback`, do not blindly execute it. The map cursor inference may be stale or underdetermined; use a short key probe or user observation to confirm the real cursor first.
+At the time of this update it reported `target=15level`, `cursor=(16, 7) source=levelsurrounds`, and `moves=left,enter`.
 
 ## Files To Know
 
@@ -128,7 +131,8 @@ If it reports `source=selector fallback`, do not blindly execute it. The map cur
 
 - `frontmost=Chowdren` only proves the game process is focused; it does not prove movement or success.
 - A level is complete only when its save field becomes `3`.
-- Use the default `0.5s` delay between key presses. Faster input can diverge, including restart confirmation sequences.
+- Use the default `0.5s` delay between key presses. For long routes, keep the cgevent hold at least `90ms`; route notes may specify a higher hold such as `140ms`.
+- Expand `AND` rules when restating initial rules, e.g. `BABA IS YOU AND SINK` means both `BABA IS YOU` and `BABA IS SINK`.
 - Text blocks are pushable by default.
 - `B` in parser output means real `baba`; `M` means `brick`.
 - Do not treat the outer border as walkable.
@@ -141,8 +145,8 @@ If it reports `source=selector fallback`, do not blindly execute it. The map cur
 See `runs/baba_level_notes.md` for details. Most recent:
 
 ```text
-6level / grass yard:
-up,left,left,left,left,up,up,right,right,right,right,right,right,right,down,down,right,down,down,right,right,right,right,down,right,up,up,right,right,down,left,down,left,up,up,up,right,up,left,left,left,left,right,right,right,up,right,up,left,left,left,left,right,down
+209level / lock:
+up,left*3,down,right*9,right*2,up,right*3,down,left*7,up,left,down*5,right,down,left*3,down,left,up,right*3,up,left,up,right,up*3,right*6,up,right,down*5
 ```
 
-Use `--delay 0.5` for this route. Faster automatic input previously diverged even though the route itself was correct.
+Use `--delay 0.5 --hold-ms 140` for this route. It completed with `209level=3`.

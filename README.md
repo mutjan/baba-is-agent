@@ -78,8 +78,10 @@ Send moves:
 python3 scripts/baba_send_keys.py 'right,left,up'
 ```
 
-`baba_send_keys.py` defaults to a 0.5 second delay between keys because faster
-input can miss restart confirmation or long routes in Baba Is You.
+`baba_send_keys.py` defaults to a 0.5 second delay between keys and a 90ms
+CoreGraphics key hold because faster or shorter input can miss restart
+confirmation or long routes in Baba Is You. Some route notes may specify a
+larger hold, such as `--hold-ms 140`.
 
 Restart the current level or world-map position:
 
@@ -122,7 +124,8 @@ python3 scripts/baba_search_route.py --make-rule flag is win
 
 - `scripts/baba_config.py`: shared config loader and first-run config creation.
 - `scripts/parse_baba_level.py`: reads save state, `.ld`, `.l`, and `values.lua`, then
-  prints rules, a text map, and object positions.
+  prints rules, a text map, object positions, and raw object directions for
+  `MOVE` reasoning.
 - `scripts/baba_send_keys.py`: compiles and calls the CoreGraphics helper by default.
 - `scripts/baba_cgevent_keys.c`: tiny macOS key-event sender.
 - `scripts/baba_map_route.py`: infers current map cursor and next-level route from save
