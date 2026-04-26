@@ -30,7 +30,11 @@ SYMBOLS = {
     "door": "D",
     "key": "Y",
     "flag": "G",
+    "skull": "S",
+    "brick": "M",
+    "flower": "*",
     "text_baba": "b",
+    "text_and": "&",
     "text_keke": "k",
     "text_rock": "r",
     "text_ice": "i",
@@ -161,6 +165,33 @@ def parse_level_binary(level_path: Path) -> tuple[int, int, list[list[int]]]:
     return width, height, layers
 
 
+def parse_level_direction_layers(level_path: Path, cell_count: int) -> list[list[int]]:
+    data = level_path.read_bytes()
+    layers: list[list[int]] = []
+    for match in re.finditer(b"DATA", data):
+        start = match.start()
+        zlib_start = -1
+        for candidate in range(start + 4, min(start + 40, len(data) - 1)):
+            if data[candidate] == 0x78:
+                try:
+                    compressed_len = struct.unpack_from("<I", data, candidate - 4)[0]
+                except struct.error:
+                    continue
+                if compressed_len <= 0 or candidate + compressed_len > len(data):
+                    continue
+                try:
+                    raw = zlib.decompress(data[candidate : candidate + compressed_len])
+                except zlib.error:
+                    continue
+                if len(raw) == cell_count:
+                    zlib_start = candidate
+                    layers.append(list(raw))
+                    break
+        if zlib_start < 0:
+            continue
+    return layers
+
+
 def word_for(name: str) -> str | None:
     return name.removeprefix("text_") if name.startswith("text_") else None
 
@@ -190,17 +221,59 @@ def active_rules(
                 if word:
                     grid[y][x].append(word)
 
+    def in_bounds(x: int, y: int) -> bool:
+        return 0 <= x < width and 0 <= y < height
+
+    def words_at(x: int, y: int) -> list[str]:
+        if not in_bounds(x, y):
+            return []
+        return grid[y][x]
+
+    def extend_and_sequence(
+        x: int,
+        y: int,
+        dx: int,
+        dy: int,
+    ) -> list[tuple[list[tuple[str, tuple[int, int]]], int]]:
+        sequences: list[tuple[list[tuple[str, tuple[int, int]]], int]] = []
+        states: list[tuple[list[tuple[str, tuple[int, int]]], int]] = []
+        for word in words_at(x, y):
+            if word not in {"is", "and"}:
+                states.append(([(word, (x, y))], 1))
+
+        while states:
+            items, offset = states.pop()
+            sequences.append((items, offset))
+            and_x = x + offset * dx
+            and_y = y + offset * dy
+            next_x = x + (offset + 1) * dx
+            next_y = y + (offset + 1) * dy
+            if "and" not in words_at(and_x, and_y):
+                continue
+            for word in words_at(next_x, next_y):
+                if word not in {"is", "and"}:
+                    states.append(([*items, (word, (next_x, next_y))], offset + 2))
+        return sequences
+
     rules: list[tuple[str, tuple[int, int], str, str, str]] = []
+    seen_rules: set[tuple[str, tuple[int, int], str, str, str]] = set()
     for y in range(height):
         for x in range(width):
             for dx, dy, direction in ((1, 0, "H"), (0, 1, "V")):
-                if x + 2 * dx >= width or y + 2 * dy >= height:
-                    continue
-                for first in grid[y][x]:
-                    for middle in grid[y + dy][x + dx]:
-                        for last in grid[y + 2 * dy][x + 2 * dx]:
-                            if middle == "is":
-                                rules.append((direction, (x, y), first, middle, last))
+                for subjects, offset in extend_and_sequence(x, y, dx, dy):
+                    is_x = x + offset * dx
+                    is_y = y + offset * dy
+                    if "is" not in words_at(is_x, is_y):
+                        continue
+                    prop_x = x + (offset + 1) * dx
+                    prop_y = y + (offset + 1) * dy
+                    for props, _prop_offset in extend_and_sequence(prop_x, prop_y, dx, dy):
+                        for first, first_coord in subjects:
+                            for last, _last_coord in props:
+                                rule = (direction, first_coord, first, "is", last)
+                                if rule not in seen_rules:
+                                    seen_rules.add(rule)
+                                    rules.append(rule)
     return rules
 
 
@@ -229,6 +302,7 @@ def main() -> int:
     parser.add_argument("--world", help="World folder, such as museum or baba")
     parser.add_argument("--level", help="Level id without extension, such as y128level")
     parser.add_argument("--all-layers", action="store_true", help="Print every map layer")
+    parser.add_argument("--rules-only", action="store_true", help="Print level identity and initial active rules only")
     args = parser.parse_args()
     config = load_config(args.config)
     game_root = args.game_root or config.game_root
@@ -254,16 +328,22 @@ def main() -> int:
     code_to_name.update(level_code_to_name)
     name_to_symbol.update(level_name_to_symbol)
     width, height, layers = parse_level_binary(l_path)
+    direction_layers = parse_level_direction_layers(l_path, width * height)
     positions = collect_positions(width, height, layers, code_to_name)
     rules = active_rules(width, height, layers, code_to_name)
+    move_bounds = f"x=1..{width - 2} y=1..{height - 2}"
 
     source = f"slot={slot} " if slot is not None else ""
     print(f"{source}world={world} level={level} name={general.get('name', '<unknown>')}")
     print(f"size={width}x{height} layers={len(layers)}")
+    print(f"movement_bounds={move_bounds} (file coordinates; outer border is not walkable)")
     print()
-    print("Active rules:")
+    print("Initial active rules:" if args.rules_only else "Active rules:")
     for direction, (x, y), first, middle, last in rules:
         print(f"  {direction} ({x},{y}): {first} {middle} {last}")
+
+    if args.rules_only:
+        return 0
 
     print()
     layer_count = len(layers) if args.all_layers else 1
@@ -275,7 +355,14 @@ def main() -> int:
 
     print("Positions:")
     for name, coords in positions.items():
-        pretty = ", ".join(f"({x},{y},L{layer})" for x, y, layer in coords)
+        pretty_coords = []
+        for x, y, layer in coords:
+            suffix = ""
+            if not name.startswith("text_") and layer < len(direction_layers):
+                direction = direction_layers[layer][y * width + x]
+                suffix = f",dir={direction}"
+            pretty_coords.append(f"({x},{y},L{layer}{suffix})")
+        pretty = ", ".join(pretty_coords)
         print(f"  {name}: {pretty}")
 
     return 0

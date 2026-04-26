@@ -13,6 +13,7 @@ import collections
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from baba_config import load_config
@@ -65,11 +66,41 @@ def save_statuses(save_section: dict[str, str]) -> dict[str, int]:
     return statuses
 
 
-def default_target(statuses: dict[str, int], map_level: str) -> str | None:
+def save_map_coords(save_section: dict[str, str], map_level: str) -> dict[tuple[int, int], int]:
+    coords: dict[tuple[int, int], int] = {}
+    prefix = re.escape(map_level)
+    for key, value in save_section.items():
+        match = re.fullmatch(prefix + r",(\d+),(\d+)", key)
+        if match:
+            coords[(int(match.group(1)), int(match.group(2)))] = parse_int(value)
+    return coords
+
+
+def default_target(
+    statuses: dict[str, int],
+    map_level: str,
+    level_items: list[dict[str, str]],
+    excluded_level_ids: set[str],
+) -> str | None:
+    map_candidates: list[tuple[int, str]] = []
+    for item in level_items:
+        file_id = item.get("file", "")
+        if (
+            file_id
+            and file_id not in excluded_level_ids
+            and file_id != map_level
+            and statuses.get(file_id) != 3
+            and parse_int(item.get("state")) > 0
+            and parse_int(item.get("style")) != 2
+        ):
+            map_candidates.append((parse_int(item.get("number"), 10_000), file_id))
+    if map_candidates:
+        return sorted(map_candidates, key=lambda item: (item[0], natural_level_key(item[1])))[0][1]
+
     candidates = [
         level
         for level, status in statuses.items()
-        if level != map_level and status == 2
+        if level not in excluded_level_ids and level != map_level and status == 2
     ]
     return sorted(candidates, key=natural_level_key)[0] if candidates else None
 
@@ -104,6 +135,7 @@ def infer_cursor(
     visible_level_coords: set[tuple[int, int]],
     visible_path_coords: set[tuple[int, int]],
     surrounds: dict[str, str],
+    preferred_coords: set[tuple[int, int]] | None = None,
 ) -> tuple[tuple[int, int], str]:
     if not surrounds:
         return selector, "selector"
@@ -121,7 +153,9 @@ def infer_cursor(
         for direction, expected in surrounds.items():
             dx, dy = SURROUND_OFFSETS[direction]
             actual = "cursor" if direction == "o" else kind((candidate[0] + dx, candidate[1] + dy))
-            if actual != expected:
+            if direction in {"dr", "ur", "ul", "dl"} and actual == "line":
+                actual = "-"
+            if actual != expected and not (expected == "-" and actual == "line"):
                 ok = False
                 break
         if ok:
@@ -129,6 +163,9 @@ def infer_cursor(
 
     if len(matches) == 1:
         return matches[0], "levelsurrounds"
+    preferred_matches = sorted(set(matches) & (preferred_coords or set()))
+    if len(preferred_matches) == 1:
+        return preferred_matches[0], f"previous among {len(matches)} levelsurrounds matches"
     if selector in matches:
         return selector, f"selector among {len(matches)} levelsurrounds matches"
     return selector, f"selector fallback; {len(matches)} levelsurrounds matches"
@@ -161,18 +198,27 @@ def main() -> int:
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
     parser.add_argument("--enter-key", choices=["enter", "confirm"], default="enter")
     parser.add_argument("--execute", action="store_true", help="Send the detected route with baba_send_keys.py")
+    parser.add_argument("--hold-ms", type=int, default=90, help="Key hold passed to baba_send_keys.py with --execute")
+    parser.add_argument(
+        "--no-rules-summary",
+        action="store_true",
+        help="Do not print the entered level's initial active rules after --execute",
+    )
     args = parser.parse_args()
     config = load_config(args.config)
     game_root = args.game_root or config.game_root
     save_dir = args.save_dir or config.save_dir
 
-    slot, world, _previous = current_level(save_dir)
+    slot, world, previous = current_level(save_dir)
     save_file = save_dir / f"{slot}ba.ba"
     save = read_ini_like(save_file)
     save_section = save.get(world, {})
-    map_level = save_section.get("leveltree") or save_section.get("Previous")
-    if not map_level:
+    leveltree = save_section.get("leveltree") or save_section.get("Previous")
+    if not leveltree:
         raise SystemExit(f"Could not find leveltree/Previous in {save_file} [{world}]")
+    leveltree_parts = [part for part in leveltree.split(",") if part]
+    map_level = leveltree_parts[-1]
+    excluded_level_ids = set(leveltree_parts)
 
     ld_path = game_root / world / f"{map_level}.ld"
     sections = read_ini_like(ld_path)
@@ -183,15 +229,15 @@ def main() -> int:
 
     statuses = save_statuses(save_section)
     prize_total = parse_int(save.get(f"{world}_prize", {}).get("total"))
-    target = args.target or default_target(statuses, map_level)
+    levels = numbered_items(sections.get("levels", {}))
+    paths = numbered_items(sections.get("paths", {}))
+    target = args.target or default_target(statuses, map_level, list(levels.values()), excluded_level_ids)
     if not target:
         raise SystemExit("Could not infer target. Pass a level id such as 1level.")
 
-    levels = numbered_items(sections.get("levels", {}))
-    paths = numbered_items(sections.get("paths", {}))
-
     level_by_coord: dict[tuple[int, int], list[dict[str, str]]] = collections.defaultdict(list)
     target_coords: set[tuple[int, int]] = set()
+    previous_coords: set[tuple[int, int]] = set()
     for index, item in levels.items():
         if level_count and index >= level_count:
             continue
@@ -201,8 +247,15 @@ def main() -> int:
         level_by_coord[coord].append(item)
         if item.get("file") == target:
             target_coords.add(coord)
+        if item.get("file") == previous:
+            previous_coords.add(coord)
 
-    visible_path_coords = set()
+    save_path_coords = {
+        coord
+        for coord, status in save_map_coords(save_section, map_level).items()
+        if status > 0
+    }
+    unlocked_path_coords = set()
     for index, item in paths.items():
         if path_count and index >= path_count:
             continue
@@ -211,7 +264,8 @@ def main() -> int:
             continue
         coord = coord_from_item(item)
         if coord is not None:
-            visible_path_coords.add(coord)
+            unlocked_path_coords.add(coord)
+    visible_path_coords = save_path_coords or unlocked_path_coords
 
     passable = set(visible_path_coords)
     visible_level_coords = set()
@@ -230,6 +284,7 @@ def main() -> int:
         visible_level_coords,
         visible_path_coords,
         parse_levelsurrounds(save_section.get("levelsurrounds")),
+        previous_coords,
     )
 
     path = shortest_path(cursor, target_coords, passable)
@@ -238,13 +293,30 @@ def main() -> int:
 
     moves = [*path, args.enter_key]
     print(f"slot={slot} world={world} map={map_level}")
+    if leveltree != map_level:
+        print(f"leveltree={leveltree}")
     print(f"cursor={cursor} source={cursor_source}")
     print(f"target={target} coords={sorted(target_coords)}")
     print("moves=" + ",".join(moves))
-    print(f"command=python3 scripts/baba_send_keys.py '{','.join(moves)}'")
+    print(f"command=python3 scripts/baba_send_keys.py '{','.join(moves)}' --hold-ms {args.hold_ms}")
 
     if args.execute:
-        subprocess.run([sys.executable, str(ROOT / "baba_send_keys.py"), ",".join(moves)], check=True)
+        subprocess.run(
+            [sys.executable, str(ROOT / "baba_send_keys.py"), ",".join(moves), "--hold-ms", str(args.hold_ms)],
+            check=True,
+        )
+        if not args.no_rules_summary:
+            for _ in range(20):
+                try:
+                    _slot, _world, current = current_level(save_dir)
+                except SystemExit:
+                    current = None
+                if current == target:
+                    break
+                time.sleep(0.1)
+            print()
+            print("Entered level initial rules:")
+            subprocess.run([sys.executable, str(ROOT / "parse_baba_level.py"), "--rules-only"], check=False)
 
     return 0
 

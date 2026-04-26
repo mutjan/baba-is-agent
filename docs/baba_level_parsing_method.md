@@ -29,6 +29,7 @@
 - `LAYR` 后可读出地图宽高。
 - 每个 `MAIN` chunk 后面是 4 字节小端压缩长度，再跟 zlib 数据。
 - zlib 解压后是一组 16 位小端整数，每个整数对应一个格子。
+- 每个图层后常见 `DATA` chunk，zlib 解压后是一组 8 位方向值，每格一个。脚本会把非文字对象的原始方向打印成 `dir=N`；遇到 `MOVE` 规则时先看这个方向。
 - `65535` 表示 void，`0` 表示 empty。
 - 不要只读 `[currobjlist]`：像 `0level` 这种基础关，关卡文件只列部分对象，`wall`、`text_win`、`text_stop` 等需要从 `values.lua` 的全局 tile 表补齐。
 
@@ -58,8 +59,8 @@ python3 scripts/parse_baba_level.py --world museum --level y128level --all-layer
 
 - 当前 `world`、`level`、关卡名、地图尺寸、图层数。
 - `Active rules`：横向或纵向成立的 `A IS B` 规则，带起点坐标。
-- 文本地图：第一行是 x 坐标末位，左侧是 y 坐标。
-- `Positions`：每种对象的全部坐标，格式为 `(x,y,L层号)`。
+- 文本地图：第一行是文件坐标的 x 末位，左侧是文件坐标 y。
+- `Positions`：每种对象的全部文件坐标，格式为 `(x,y,L层号)`；非文字对象会额外显示原始方向如 `dir=3`。文件坐标包含最外圈不可走边框，实际可移动范围是 `x=1..width-2`、`y=1..height-2`。
 
 常用符号：
 
@@ -88,6 +89,8 @@ l text_float
 t text_tele
 s text_sink
 ```
+
+注意：`B` 表示真正的 `baba`，`M` 表示 `brick`。不要把 `brick` 当成可控 Baba。
 
 ## 解题流程
 

@@ -108,10 +108,10 @@ def ensure_cgevent_helper() -> Path:
     return binary
 
 
-def send_with_cgevent(moves: list[str], delay: float) -> None:
+def send_with_cgevent(moves: list[str], delay: float, hold_ms: int) -> None:
     binary = ensure_cgevent_helper()
     subprocess.run(
-        [str(binary), "--delay-ms", str(int(delay * 1000)), *moves],
+        [str(binary), "--delay-ms", str(int(delay * 1000)), "--hold-ms", str(hold_ms), *moves],
         check=True,
     )
 
@@ -136,7 +136,13 @@ def main() -> int:
         "moves",
         help="Comma-separated moves, e.g. 'right*8' or 'right,right,up'",
     )
-    parser.add_argument("--delay", type=float, default=0.08, help="Delay between keys")
+    parser.add_argument("--delay", type=float, default=0.5, help="Delay between keys")
+    parser.add_argument(
+        "--hold-ms",
+        type=int,
+        default=90,
+        help="Milliseconds to hold each key when using the cgevent method",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print without sending")
     parser.add_argument(
         "--method",
@@ -148,6 +154,12 @@ def main() -> int:
         "--no-activate",
         action="store_true",
         help="Do not activate Baba Is You before sending keys",
+    )
+    parser.add_argument(
+        "--pre-delay",
+        type=float,
+        default=0.15,
+        help="Delay after activating Baba Is You before sending the first key",
     )
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--app-name", help="Override configured macOS app name")
@@ -164,10 +176,10 @@ def main() -> int:
 
     if not args.no_activate:
         activate_game(app_name)
-        time.sleep(0.15)
+        time.sleep(args.pre_delay)
 
     if args.method == "cgevent":
-        send_with_cgevent(moves, args.delay)
+        send_with_cgevent(moves, args.delay, args.hold_ms)
     else:
         for move in moves:
             send_key_code(KEY_CODES[move])
