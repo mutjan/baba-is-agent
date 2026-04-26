@@ -6,7 +6,7 @@ Only tested on Codex on macOS.
 
 ## Demo
 
-https://github.com/user-attachments/assets/5472a146-62ed-472e-8d1a-dbd415f1f6e8
+[![Watch the Demo](https://img.youtube.com/vi/nju_P7gPk3U/0.jpg)](https://www.youtube.com/watch?v=nju_P7gPk3U)
 
 
 ## Why This Exists
