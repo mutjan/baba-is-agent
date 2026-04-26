@@ -4,6 +4,10 @@ Local macOS tooling for reading and controlling Baba Is You from Codex.
 
 Only tested on Codex on macOS.
 
+## Demo
+
+[Watch the demo video](demo.mp4)
+
 ## Why This Exists
 
 This project reads local Baba Is You files and sends local macOS keyboard
