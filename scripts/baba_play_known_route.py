@@ -108,6 +108,12 @@ def print_route(level: str, route: dict[str, Any], *, delay: float, hold_ms: int
     print(f"expanded_steps={len(expanded)}")
     print(f"hold_ms={hold_ms}")
     print(f"delay={delay}")
+    if route.get("last_score_steps") is not None:
+        print(f"last_score_steps={route['last_score_steps']}")
+    if route.get("best_score_steps") is not None:
+        print(f"best_score_steps={route['best_score_steps']}")
+    if route.get("last_score_source") is not None:
+        print(f"last_score_source={route['last_score_source']}")
     if route.get("last_elapsed_seconds") is not None:
         print(f"last_elapsed_seconds={route['last_elapsed_seconds']}")
     if route.get("best_elapsed_seconds") is not None:
@@ -137,10 +143,12 @@ def main() -> int:
 
     if args.list:
         for level_id, route in sorted(routes.items()):
-            timing = ""
-            if route.get("best_elapsed_seconds") is not None:
-                timing = f" best={route['best_elapsed_seconds']}s"
-            print(f"{level_id}: {route['name']} -> {route['moves']}{timing}")
+            score = ""
+            if route.get("best_score_steps") is not None:
+                score = f" best_score={route['best_score_steps']} steps"
+            elif route.get("best_elapsed_seconds") is not None:
+                score = f" legacy_best_time={route['best_elapsed_seconds']}s"
+            print(f"{level_id}: {route['name']} -> {route['moves']}{score}")
         return 0
 
     if args.level:

@@ -34,6 +34,8 @@ python3 scripts/baba_map_route.py
 - `README.md`: installation, configuration, MCP setup, and tool reference.
 - `start_benchmark.py`: root first-run handoff entry for newly assigned agents.
 - `scripts/baba_mcp_server.py`: thin MCP stdio wrapper over the core scripts.
+- `scripts/baba_next_action.py`: read-only next-action classifier for weak or
+  newly assigned agents.
 - `scripts/baba_config.py`: local config creator/status refresher. It updates
   `game_files_found` and `state_exporter_installed` in ignored config.
 - `scripts/read_baba_state.py`: reads the current exported save-group state,
@@ -41,6 +43,8 @@ python3 scripts/baba_map_route.py
 - `scripts/parse_baba_level.py`: static parser for current/specific levels.
 - `scripts/baba_try.py`: sends a short action segment and prints state deltas.
 - `scripts/baba_restart.py`: restarts the current level or map position.
+- `scripts/baba_return_to_map.py`: returns from the current level or sub-map to
+  its parent map.
 - `scripts/baba_map_route.py`: route detector for world map navigation; it
   prefers the live-state cursor when available.
 - `scripts/baba_benchmark.py`: starts/stops timing and updates run records.
@@ -53,6 +57,8 @@ python3 scripts/baba_map_route.py
 - `frontmost=Chowdren` only proves the game process is focused; it does not
   prove movement or success.
 - A level is complete only when its save field becomes `3`.
+- Benchmark score is pass step count. Prefer live-state `turn`; wall-clock time
+  is auxiliary only.
 - Use the configured `input_delay`; the checked-in default is `0.02s`.
 - Text blocks are pushable by default because `TEXT IS PUSH` is a base rule.
 - If `scripts/read_baba_state.py` has fresh output, prefer it over static

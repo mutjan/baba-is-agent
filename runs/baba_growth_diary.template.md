@@ -22,5 +22,6 @@ Avoid:
 - dry labels such as `Step1`, `YOU=wall`, or `baba/0level`;
 - simply restating the mechanical benchmark facts.
 
-It is okay to mention elapsed time and route length briefly, but only as context
-for the learning story. Keep the voice reflective, concrete, and human.
+It is okay to mention score steps or route length briefly, but only as context
+for the learning story. Do not frame wall-clock time as the score. Keep the
+voice reflective, concrete, and human.

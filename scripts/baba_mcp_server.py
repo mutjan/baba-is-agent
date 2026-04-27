@@ -107,6 +107,14 @@ TOOLS: dict[str, dict[str, Any]] = {
             },
         },
     ),
+    "suggest_next_action": tool_schema(
+        description="Read current live state and suggest the next safe MCP/script action for a benchmark agent.",
+        properties={
+            **COMMON_CONFIG,
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "raw_json": {"type": "boolean", "description": "Return JSON instead of key=value lines."},
+        },
+    ),
     "read_state": tool_schema(
         description="Read the latest live state emitted by the Lua exporter.",
         properties={
@@ -162,6 +170,17 @@ TOOLS: dict[str, dict[str, Any]] = {
             "dry_run": {"type": "boolean", "description": "Print command without sending keys."},
         },
     ),
+    "return_to_map": tool_schema(
+        description="Return from the current level or sub-map to its parent map using escape,down,enter.",
+        properties={
+            **COMMON_CONFIG,
+            "delay": {"type": "number", "description": "Delay between keys."},
+            "hold_ms": {"type": "integer", "description": "Milliseconds to hold each key."},
+            "app_name": {"type": "string", "description": "Optional macOS app name override."},
+            "no_activate": {"type": "boolean", "description": "Do not activate Baba before sending."},
+            "dry_run": {"type": "boolean", "description": "Print command without sending keys."},
+        },
+    ),
     "navigate_next": tool_schema(
         description="Execute map_route, then read_state --wait and parse_rules in one call.",
         properties={
@@ -212,7 +231,7 @@ TOOLS: dict[str, dict[str, Any]] = {
         },
     ),
     "record_pass": tool_schema(
-        description="Record an interactively solved level, stop the active timer, and update run files.",
+        description="Record an interactively solved level, compute pass-step score, and update run files.",
         properties={
             **COMMON_CONFIG,
             "moves": {"type": "string", "description": "Verified full route."},
@@ -383,6 +402,14 @@ def inspect_state(args: dict[str, Any]) -> tuple[str, bool]:
     return aggregate_results(steps)
 
 
+def suggest_next_action(args: dict[str, Any]) -> tuple[str, bool]:
+    command: list[str] = []
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "save_dir", "--save-dir")
+    add_bool(command, args, "raw_json", "--json")
+    return run_script("baba_next_action.py", command, args)
+
+
 def read_state(args: dict[str, Any]) -> tuple[str, bool]:
     command: list[str] = []
     add_value(command, args, "config", "--config")
@@ -435,6 +462,17 @@ def restart_level(args: dict[str, Any]) -> tuple[str, bool]:
     add_bool(command, args, "no_activate", "--no-activate")
     add_bool(command, args, "dry_run", "--dry-run")
     return run_script("baba_restart.py", command, args)
+
+
+def return_to_map(args: dict[str, Any]) -> tuple[str, bool]:
+    command: list[str] = []
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "delay", "--delay")
+    add_value(command, args, "hold_ms", "--hold-ms")
+    add_value(command, args, "app_name", "--app-name")
+    add_bool(command, args, "no_activate", "--no-activate")
+    add_bool(command, args, "dry_run", "--dry-run")
+    return run_script("baba_return_to_map.py", command, args)
 
 
 def navigate_next(args: dict[str, Any]) -> tuple[str, bool]:
@@ -521,10 +559,12 @@ TOOL_HANDLERS = {
     "set_current_run_id": set_current_run_id,
     "start_benchmark": start_benchmark,
     "inspect_state": inspect_state,
+    "suggest_next_action": suggest_next_action,
     "read_state": read_state,
     "parse_rules": parse_rules,
     "try_moves": try_moves,
     "restart_level": restart_level,
+    "return_to_map": return_to_map,
     "navigate_next": navigate_next,
     "map_route": map_route,
     "play_known_route": play_known_route,

@@ -3,13 +3,14 @@
 
 This script is an onboarding wrapper around the existing tools. It does not
 solve levels and does not replace baba_benchmark.py; it checks local readiness,
-prints the rules that new agents usually miss, starts the benchmark timer, and
+prints the rules that new agents usually miss, starts the benchmark attempt, and
 prints the next commands/tools to use.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -113,6 +114,46 @@ def benchmark_command(args: argparse.Namespace, run_id: str) -> list[str]:
     return command
 
 
+def next_action_command(args: argparse.Namespace) -> list[str]:
+    command = [sys.executable, str(SCRIPTS_DIR / "baba_next_action.py"), "--json"]
+    if args.config:
+        command.extend(["--config", str(args.config)])
+    if args.save_dir:
+        command.extend(["--save-dir", str(args.save_dir)])
+    return command
+
+
+def map_gate(args: argparse.Namespace) -> bool:
+    if args.enter_next:
+        return False
+    proc = subprocess.run(
+        next_action_command(args),
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return False
+    try:
+        action = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return False
+    if action.get("context") != "map":
+        return False
+
+    print_section("Map detected")
+    print(f"world={action.get('world')}")
+    print(f"level={action.get('level')}")
+    print(f"name={action.get('name')}")
+    print("Do not start a level benchmark on a map/sub-map.")
+    print(f"next_mcp_tool={action.get('next_mcp_tool')}")
+    print(f"next_script={action.get('next_script')}")
+    print(f"reason={action.get('reason')}")
+    print("After entering a real level, run start_benchmark again.")
+    return True
+
+
 def inspect_commands(args: argparse.Namespace) -> list[list[str]]:
     state = [sys.executable, str(SCRIPTS_DIR / "read_baba_state.py"), "--limit", str(args.state_limit)]
     rules = [sys.executable, str(SCRIPTS_DIR / "parse_baba_level.py"), "--rules-only"]
@@ -128,11 +169,13 @@ def inspect_commands(args: argparse.Namespace) -> list[list[str]]:
 def print_next_steps() -> None:
     print_section("Next agent loop")
     print("Prefer MCP tools when available:")
-    print("1. inspect_state")
-    print("2. try_moves with the shortest meaningful move segment")
-    print("3. restart_level if an experiment goes bad")
-    print("4. navigate_next when on the world map/overworld")
-    print("5. record_pass only after completion status is 3")
+    print("1. suggest_next_action if you are unsure")
+    print("2. inspect_state")
+    print("3. try_moves with the shortest meaningful move segment")
+    print("4. restart_level if an experiment goes bad")
+    print("5. return_to_map when you need to leave a level or sub-map")
+    print("6. navigate_next when on the world map/overworld")
+    print("7. record_pass only after completion status is 3")
     print()
     print("Script fallback:")
     print("python3 scripts/baba_try.py '<short move segment>'")
@@ -148,7 +191,7 @@ def main() -> int:
     parser.add_argument("--run-id", help="Set/use runs/<run_id>, e.g. 002_claude_sonnet")
     parser.add_argument("--force-new", action="store_true", help="Start a new attempt even if one is active")
     parser.add_argument("--enter-next", action="store_true", help="Enter the next map level before starting")
-    parser.add_argument("--dry-run", action="store_true", help="Print benchmark action without writing timer files")
+    parser.add_argument("--dry-run", action="store_true", help="Print benchmark action without writing attempt files")
     parser.add_argument("--skip-primer", action="store_true", help="Do not print the Baba rules primer")
     parser.add_argument("--no-inspect", action="store_true", help="Do not print current state and rules after starting")
     parser.add_argument("--state-limit", type=int, default=12, help="Limit read_baba_state groups during inspection")
@@ -165,7 +208,10 @@ def main() -> int:
 
     _config, run_id = ensure_ready(args)
 
-    print_section("Start benchmark timer")
+    if map_gate(args):
+        return 0
+
+    print_section("Start benchmark attempt")
     code = run_display(benchmark_command(args, run_id), check=False)
     if code != 0:
         return code

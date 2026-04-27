@@ -140,10 +140,12 @@ Current tools:
 - `set_current_run_id`
 - `start_benchmark`
 - `inspect_state`
+- `suggest_next_action`
 - `read_state`
 - `parse_rules`
 - `try_moves`
 - `restart_level`
+- `return_to_map`
 - `navigate_next`
 - `map_route`
 - `play_known_route`
@@ -158,11 +160,11 @@ python3 start_benchmark.py --run-id 001_agent_model
 ```
 
 That script checks local readiness, prints the Baba rules primer, starts or
-resumes the benchmark timer through the core script, and points the agent to the
-next MCP-first loop. The full target and operation contract lives in
+resumes the benchmark attempt through the core script, and points the agent to
+the next MCP-first loop. The full target and operation contract lives in
 `AGENTS.md`.
 
-Use this dry run to verify the handoff without writing timer files:
+Use this dry run to verify the handoff without writing attempt files:
 
 ```bash
 python3 start_benchmark.py --dry-run --skip-primer --no-inspect
@@ -182,10 +184,14 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 - `scripts/baba_try.py`: sends a short move segment, waits for state refreshes,
   and prints meaningful state deltas.
 - `scripts/baba_restart.py`: restarts the current level or world-map position.
+- `scripts/baba_return_to_map.py`: returns from the current level or sub-map to
+  its parent map with `esc,down,enter`.
+- `scripts/baba_next_action.py`: read-only helper that classifies the current
+  state as map/level and prints the safest next MCP/script action.
 - `scripts/baba_map_route.py`: infers current map cursor and next-level route
   from live state when available, with save/map metadata fallback.
-- `scripts/baba_benchmark.py`: starts/stops benchmark timing and maintains local
-  per-agent run records.
+- `scripts/baba_benchmark.py`: starts/resumes benchmark attempts, records
+  pass-step scores, and maintains local per-agent run records.
 - `scripts/baba_play_known_route.py`: prints or executes known routes from the
   current run's JSON route data, or an explicit `--routes` path.
 - `scripts/baba_mcp_server.py`: thin MCP stdio wrapper over the core scripts.
@@ -195,6 +201,26 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   save-file writes.
 
 ## Changelog
+
+### 2026-04-27
+
+- Split agent-facing instructions into `AGENTS.md`, leaving `README.md` focused
+  on installation, configuration, MCP setup, and tool reference.
+- Added root `start_benchmark.py` as the first-run agent handoff entry. It now
+  checks local readiness, prints the rules primer, and refuses to start a level
+  benchmark when the current state is a map/sub-map.
+- Changed benchmark scoring to pass step count. `record_pass` prefers the live
+  state `turn` value from the win event, falls back to expanded route length,
+  and keeps wall-clock time only as auxiliary metadata.
+- Updated run records and `baba_known_routes.json` metadata with
+  `score_steps`, `score_source`, `last_score_steps`, and `best_score_steps`.
+- Added `scripts/baba_return_to_map.py` and MCP `return_to_map` for the
+  `esc,down,enter` return-to-parent-map menu flow.
+- Added `scripts/baba_next_action.py` and MCP `suggest_next_action` so weaker
+  agents can ask for the safest next action before acting.
+- Updated run templates so level notes and learned rules use step-score
+  language, and the growth diary template avoids treating wall-clock time as
+  the score.
 
 ### 2026-04-26
 
@@ -208,8 +234,6 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   solved routes into run directories for separate replay use.
 - Added config status detection for game files and installed exporter state.
 - Added optional `scripts/baba_mcp_server.py` as a thin MCP wrapper.
-- Added root `start_benchmark.py` as the first-run agent handoff entry and moved
-  the benchmark operating contract into `AGENTS.md`.
 
 ## Current Limits
 

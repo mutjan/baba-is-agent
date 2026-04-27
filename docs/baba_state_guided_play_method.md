@@ -65,11 +65,13 @@ python3 start_benchmark.py --run-id 001_agent_model
 If MCP is available, call the equivalent MCP `start_benchmark` tool and then
 continue with MCP tools:
 
-1. `inspect_state`
-2. `set_current_run_id` when needed
-3. `start_benchmark`
-4. `try_moves`
-5. `record_pass` after completion status is `3`
+1. `suggest_next_action` if unsure
+2. `inspect_state`
+3. `set_current_run_id` when needed
+4. `start_benchmark`
+5. `try_moves`
+6. `return_to_map` when leaving a level or sub-map
+7. `record_pass` after completion status is `3`
 
 Use lower-level script entries only when MCP is unavailable or when debugging
 the wrapper:
@@ -85,6 +87,15 @@ record, and prints the state-guided commands to continue with. Other agents
 should set `current_run_id` with `set_current_run_id`. After an interactive
 solve, use `record_pass`.
 
+Benchmark scoring is pass step count, not wall-clock time. `record_pass`
+prefers the live-state `turn` value from the level's win event as
+`score_steps`; if that is unavailable, it falls back to the expanded verified
+route length. A local undo test showed that undo restores the board but does
+not roll the live-state `turn` backward, and the undo input itself does not add
+an extra turn.
+`record_pass` also writes `last_score_steps` and `best_score_steps` to the
+run-local `baba_known_routes.json` for replay metadata.
+
 Script fallback for recording a pass:
 
 ```bash
@@ -94,7 +105,7 @@ python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' 
 For every passed level, keep these four local files current inside that
 agent-specific run directory:
 
-- `baba_benchmark_log.md`: mechanical benchmark facts and evidence.
+- `baba_benchmark_log.md`: mechanical benchmark facts, score steps, and evidence.
 - `baba_level_notes.md`: per-level route, checkpoints, coordinates, and result.
 - `baba_learned_rules.md`: reusable lessons, or a note that no new generic lesson was found.
 - `baba_growth_diary.md`: first-person learning/growth diary in the user's language.
@@ -103,8 +114,9 @@ Agents that support MCP may use `scripts/baba_mcp_server.py` for the same loop.
 The MCP server is a thin wrapper over the scripts; it must not become a second
 implementation of state reading, key input, or benchmark recording.
 Its high-frequency tools are `inspect_state`, `set_current_run_id`,
-`start_benchmark`, `try_moves`, `restart_level`, `navigate_next`, `map_route`,
-`play_known_route`, and `record_pass`.
+`suggest_next_action`, `start_benchmark`, `try_moves`, `restart_level`,
+`return_to_map`, `navigate_next`, `map_route`, `play_known_route`, and
+`record_pass`.
 
 ## Interactive Loop
 
@@ -119,6 +131,12 @@ If the current level is a world map/overworld, stop normal level solving. The
 absence of a Baba object is not an error on the map; navigation is driven by the
 live-state `cursor` and `cursor is select`. Use `map_route` to enter a real
 level, then start the normal loop.
+Do not start benchmark scoring on a map; `start_benchmark` will now warn and
+point to `navigate_next` when it detects a map/sub-map.
+
+To leave a level or sub-map, use `return_to_map`. The fixed menu sequence is
+`esc,down,enter`, which returns from an in-level pause menu to the map and from
+a sub-map to its parent map.
 
 Then choose one hypothesis. Good hypotheses have a visible or state-readable
 effect, for example:

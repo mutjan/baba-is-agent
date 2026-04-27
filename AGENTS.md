@@ -7,7 +7,8 @@
 - 每次接手先确认真实状态：配置、当前 save、当前关卡、初始规则、是否在地图。
 - Benchmark 是从零开始的学习和通关能力测试，不要把当前 run 目录里的 `baba_known_routes.json` 当成解法来源。
 - 通关证据只有一个硬标准：对应关卡 save completion status 变成 `3`。
-- 每过一关，停止本关计时并更新当前 run 目录里的记录文件。
+- Benchmark 主评分是通关步数 `score_steps`，不是墙钟时间；墙钟用时只作辅助元数据。
+- 每过一关，记录本关 `score_steps` 并更新当前 run 目录里的记录文件。
 - 回答用户时使用用户的语言；本仓库协作默认每次回答以“根据第一性原理……”开头。
 
 ## 协作输出规则
@@ -38,13 +39,15 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 
 MCP 工具可用时，默认按这个顺序工作：
 
-1. `inspect_state`
-2. `set_current_run_id`，仅当当前 run id 不对或为空
-3. `start_benchmark`
-4. `try_moves`，用最短的有意义行动段测试假设
-5. `restart_level`，当实验把局面弄坏或需要回到干净检查点
-6. `navigate_next`，当当前状态是世界地图或 overworld
-7. `record_pass`，仅当完成态已经是 `3`
+1. `suggest_next_action`，不确定下一步时先调用它
+2. `inspect_state`
+3. `set_current_run_id`，仅当当前 run id 不对或为空
+4. `start_benchmark`
+5. `try_moves`，用最短的有意义行动段测试假设
+6. `restart_level`，当实验把局面弄坏或需要回到干净检查点
+7. `return_to_map`，当需要从关卡或下级地图回到上级地图
+8. `navigate_next`，当当前状态是世界地图或 overworld
+9. `record_pass`，仅当完成态已经是 `3`
 
 只在 MCP 不可用或正在调试 MCP wrapper 时回退到 `python3 scripts/...`，并说明原因。
 
@@ -52,7 +55,10 @@ MCP 工具可用时，默认按这个顺序工作：
 
 - 如果当前关卡是世界地图或 overworld，例如 `106level`、`177level`，不要按普通 Baba 关卡求解。
 - 地图上没有 Baba 对象不是错误。地图的可控对象是 live-state 里的 `cursor`，控制模型是 `cursor is select`。
-- 地图状态下使用 `navigate_next` 或 `map_route` 进入未完成关卡；进入后再读取普通关卡规则。
+- 地图状态下使用 `navigate_next` 或 `map_route` 进入未完成关卡；进入后再读取普通关卡规则，再开始本关 benchmark。
+- 在关卡内或下级地图内需要返回上级地图时，用 `return_to_map`。底层按键是 `esc,down,enter`。
+
+不要在地图或下级地图上开始关卡 benchmark。`start_benchmark` 如果检测到当前是地图，会提示先 `navigate_next`，避免把地图当普通关卡计分。
 
 ## Baba 基础规则提示
 
@@ -85,10 +91,18 @@ runs/<number_agent_model>/
 
 每过一关，当前 run 目录里的四个文件都要更新：
 
-- `baba_benchmark_log.md`：机械 benchmark 事实、计时、证据。
+- `baba_benchmark_log.md`：机械 benchmark 事实、评分步数、证据。
 - `baba_level_notes.md`：关卡路线、关键检查点、坐标和结果。
 - `baba_learned_rules.md`：可复用经验；没有新经验时写明没有。
 - `baba_growth_diary.md`：第一人称学习成长日记，使用用户的语言，不要写成路线日志。
+
+评分字段约定：
+
+- `score_steps` 是主排序字段，越小越好。
+- 优先用本关刚刚 win 时 live state 的 `turn` 作为 `score_steps`，来源记为 `live_state_turn`。
+- 如果 live state 的 `turn` 不可用，回退到验证路线展开步数，来源记为 `expanded_route_steps`。
+- 实测 undo 会把局面撤回，但不会把 live state `turn` 撤回；undo 本身不额外加一回合。
+- `elapsed_seconds` 只保留作排查基础设施差异的参考，不作为能力评分。
 
 根目录 `runs/*.template.md` 是公开模板。真实 run 子目录默认不提交。
 
@@ -96,6 +110,7 @@ runs/<number_agent_model>/
 
 - `runs/<run_id>/baba_known_routes.json` 是独立 replay 数据，不是 benchmark 解题来源。
 - `play_known_route` 可以用于回放或校验旧路线，但 benchmark 模式必须记录从当前状态学习、尝试、通过的过程。
+- `record_pass` 会把 `last_score_steps` / `best_score_steps` 写回该 JSON，方便之后回放时看到步数成绩；这不改变 benchmark 禁止读路线解题的边界。
 
 ## 安装与配置边界
 

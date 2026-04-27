@@ -41,6 +41,7 @@ ALIASES = {
     "r": "restart",
     "u": "up",
     "d": "down",
+    "ese": "esc",
 }
 
 

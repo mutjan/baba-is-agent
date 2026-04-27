@@ -33,4 +33,4 @@ python3 scripts/baba_send_keys.py '<moves>' --hold-ms <ms>
 <coordinate/rule/completion evidence>
 ```
 
-结果：`<level>=3`，用时 `<seconds>` 秒。
+结果：`<level>=3`，评分步数 `<score_steps>`（来源：`<score_source>`），路线展开 `<route_steps>` 步。
