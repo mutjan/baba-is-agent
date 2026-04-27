@@ -8,6 +8,19 @@ Recommended path for a real run:
 runs/<number_agent_model>/baba_growth_diary.md
 ```
 
-Use the user's language. Do not follow a fixed format. Let the model's own
-style come through while focusing on what it learned, how its understanding
-changed, and what the level taught it.
+Use the user's language.
+
+This file is not a route log, benchmark log, or technical level note. Write it
+as a first-person learning diary: what I noticed, what I misunderstood, what
+changed in my reasoning, and what the level taught me about solving Baba Is You.
+
+Do not use the template text itself as content for a real run.
+
+Avoid:
+
+- coordinates, full routes, step-by-step walkthroughs, and raw command output;
+- dry labels such as `Step1`, `YOU=wall`, or `baba/0level`;
+- simply restating the mechanical benchmark facts.
+
+It is okay to mention elapsed time and route length briefly, but only as context
+for the learning story. Keep the voice reflective, concrete, and human.

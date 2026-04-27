@@ -205,7 +205,10 @@ def update_run_files(record: dict[str, Any], run_dir: Path, files: dict[str, Pat
         files["growth_diary"],
         (
             f"\n## {timestamp} {level} / {name}\n\n"
-            f"{note or '用第一人称补写这关带来的学习和理解变化。'}\n\n"
+            f"我这一关学到的是：{note or '先写这关真正改变我理解的一点。'}\n\n"
+            f"我一开始看到的局面是：\n\n"
+            f"真正改变我理解的是：\n\n"
+            f"下次遇到类似关卡，我会先：\n\n"
             f"通关用时 `{elapsed}` 秒，路线共 `{steps}` 步。\n\n"
         ),
     )
