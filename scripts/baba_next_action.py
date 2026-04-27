@@ -42,6 +42,17 @@ def active_attempt(run_id: str) -> Path | None:
     return path if path.exists() else None
 
 
+def read_active_attempt(run_id: str) -> dict[str, Any] | None:
+    path = active_attempt(run_id)
+    if not path:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def route_hint(config_path: Path | None, save_dir: Path | None) -> dict[str, str]:
     command = [sys.executable, str(ROOT / "scripts" / "baba_map_route.py"), "--dry-run"]
     if config_path:
@@ -102,7 +113,11 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
     name = meta.get("level_name")
     status = completion_status(save_dir, world, level)
     context = classify_context(state)
-    active = active_attempt(config.current_run_id)
+    active_path = active_attempt(config.current_run_id)
+    active = read_active_attempt(config.current_run_id)
+    active_world = active.get("world") if active else None
+    active_level = active.get("level") if active else None
+    active_status = completion_status(save_dir, active_world, active_level) if active_world and active_level else None
 
     payload: dict[str, Any] = {
         "context": context,
@@ -111,7 +126,9 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
         "name": name,
         "completion_status": status,
         "current_run_id": config.current_run_id or "",
-        "active_attempt": str(active) if active else "",
+        "active_attempt": str(active_path) if active_path else "",
+        "active_level": f"{active_world}/{active_level}" if active_world and active_level else "",
+        "active_completion_status": active_status,
     }
 
     if context == "map":
@@ -131,12 +148,28 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
                 "reason": "Current level is already complete; return to the map before choosing the next target.",
             }
         )
+    elif active and active_status == 3:
+        payload.update(
+            {
+                "next_mcp_tool": "record_pass",
+                "next_script": "python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'",
+                "reason": "The active benchmark level is complete; record the pass before navigating further.",
+            }
+        )
+    elif active and (active_world != world or active_level != level):
+        payload.update(
+            {
+                "next_mcp_tool": "start_benchmark",
+                "next_script": "python3 start_benchmark.py --force-new",
+                "reason": "Active benchmark attempt does not match the live level. Do not solve or record until the active attempt is reset.",
+            }
+        )
     elif active:
         payload.update(
             {
-                "next_mcp_tool": "try_moves",
-                "next_script": "python3 scripts/baba_try.py '<short move segment>'",
-                "reason": "A benchmark attempt is active for this run; continue with a short state-readable experiment.",
+                "next_mcp_tool": "check_moves",
+                "next_script": "python3 scripts/baba_action_check.py '<short move segment>' --expect-moved '<unit-or-text>'",
+                "reason": "A benchmark attempt is active for this run; name one expected observable delta and let the script validate it.",
             }
         )
     elif config.current_run_id:
@@ -167,6 +200,8 @@ def print_payload(payload: dict[str, Any]) -> None:
         "completion_status",
         "current_run_id",
         "active_attempt",
+        "active_level",
+        "active_completion_status",
         "next_mcp_tool",
         "next_script",
         "route_command",

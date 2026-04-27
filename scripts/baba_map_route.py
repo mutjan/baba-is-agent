@@ -391,6 +391,9 @@ def main() -> int:
             print()
             print("Entered level initial rules:")
             subprocess.run([sys.executable, str(ROOT / "parse_baba_level.py"), "--rules-only"], check=False)
+        print()
+        print("next_command=python3 start_benchmark.py")
+        print("next_reason=Start or resume the benchmark for the entered level before solving it.")
 
     return 0
 

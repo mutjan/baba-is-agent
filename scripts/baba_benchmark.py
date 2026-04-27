@@ -142,6 +142,10 @@ def live_pass_turn_count(save_dir: Path, world: str, level: str) -> int | None:
     return turn if isinstance(turn, int) else None
 
 
+def same_level(world_a: Any, level_a: Any, world_b: Any, level_b: Any) -> bool:
+    return str(world_a or "") == str(world_b or "") and str(level_a or "") == str(level_b or "")
+
+
 def initial_rules(config: Any, world: str, level: str) -> list[str]:
     level_dir = config.game_root / world
     ld_path = level_dir / f"{level}.ld"
@@ -347,7 +351,7 @@ def start_attempt_record(
             f"- status_at_start: `{record['initial_status']}`\n"
             f"- turn_at_start: `{record['initial_turn']}`\n"
             f"- initial_rules: {', '.join(f'`{rule}`' for rule in rules) if rules else '`<unavailable>`'}\n"
-            f"- next: solve with `scripts/baba_try.py`, then run "
+            f"- next: solve with `scripts/baba_action_check.py` and explicit `--expect-*`, then run "
             f"`python3 scripts/baba_benchmark.py --record-pass --moves '<route>' --note '<summary>'`.\n\n"
         ),
     )
@@ -371,6 +375,17 @@ def record_manual_pass(
     world = args.world or active.get("world") or current_world
     if not level or not world:
         raise SystemExit(f"Active benchmark attempt is missing world/level: {active_path}")
+    active_world = active.get("world")
+    active_level = active.get("level")
+    if args.level or args.world:
+        requested_world = world
+        requested_level = level
+        if not same_level(active_world, active_level, requested_world, requested_level) and not args.allow_level_mismatch:
+            raise SystemExit(
+                "Refusing to record a different level than the active benchmark attempt.\n"
+                f"active={active_world}/{active_level} requested={requested_world}/{requested_level}\n"
+                "Start the benchmark before solving the level. Use --allow-level-mismatch only for explicit repair."
+            )
     status = completion_status(save_dir, world, level)
     if status != 3 and not args.allow_without_status:
         raise SystemExit(f"{level} is not complete yet: status={status}")
@@ -430,6 +445,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Print the planned action without sending keys or writing files")
     parser.add_argument("--record-pass", action="store_true", help="Record an interactively solved level using the active attempt")
     parser.add_argument("--allow-without-status", action="store_true", help="Allow --record-pass even if save status is not 3")
+    parser.add_argument("--allow-level-mismatch", action="store_true", help="Repair-only: record a level different from the active attempt")
     parser.add_argument("--no-run-updates", action="store_true", help="Do not append local runs/<run_id>/*.md records")
     parser.add_argument("--force-new", action="store_true", help="Start a new attempt even if one is already active")
     parser.add_argument(
@@ -462,13 +478,27 @@ def main() -> int:
 
     if active_path.exists() and not args.force_new:
         active = json.loads(active_path.read_text(encoding="utf-8"))
+        active_world = active.get("world")
+        active_level = active.get("level")
+        active_status = completion_status(save_dir, str(active_world or ""), str(active_level or ""))
         elapsed = max(0.0, time.time() - float(active.get("start_time") or time.time()))
         print(f"active_attempt={active_path}")
         print(f"run_id={run_id}")
-        print(f"level={active.get('world')}/{active.get('level')} name={active.get('name')}")
+        print(f"level={active_world}/{active_level} name={active.get('name')}")
+        print(f"active_completion_status={active_status}")
+        print(f"current_state={world}/{level} name={name}")
         print(f"elapsed_seconds={round(elapsed, 3)}")
         print("score_metric=pass_step_count")
-        print("next_commands=python3 scripts/read_baba_state.py ; python3 scripts/parse_baba_level.py --rules-only ; python3 scripts/baba_try.py '<short segment>'")
+        if active_status == 3:
+            print("active_level_complete=true")
+            print("next_commands=python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
+            return 0
+        if not same_level(active_world, active_level, world, level):
+            print("active_state_mismatch=true")
+            print("reason=Active benchmark attempt does not match the live level. Do not solve or record until this is fixed.")
+            print("next_commands=python3 start_benchmark.py --force-new")
+            return 2
+        print("next_commands=python3 scripts/read_baba_state.py ; python3 scripts/parse_baba_level.py --rules-only ; python3 scripts/baba_action_check.py '<short segment>' --expect-moved '<unit-or-text>'")
         print(f"record_command=python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
         return 0
 
@@ -479,7 +509,7 @@ def main() -> int:
     print("benchmark_mode=from_zero_state_guided")
     print("score_metric=pass_step_count")
     print("known_routes_used=0")
-    print("next_commands=python3 scripts/read_baba_state.py ; python3 scripts/parse_baba_level.py --rules-only ; python3 scripts/baba_try.py '<short segment>'")
+    print("next_commands=python3 scripts/read_baba_state.py ; python3 scripts/parse_baba_level.py --rules-only ; python3 scripts/baba_action_check.py '<short segment>' --expect-moved '<unit-or-text>'")
     print(f"record_command=python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
     return 0
 

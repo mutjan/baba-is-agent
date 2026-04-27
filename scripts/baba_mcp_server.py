@@ -175,6 +175,58 @@ TOOLS: dict[str, dict[str, Any]] = {
         },
         required=["moves"],
     ),
+    "check_moves": tool_schema(
+        description=(
+            "Send a short move segment and fail unless the named expected delta occurs. "
+            "Use this to validate hypotheses with the script, not hidden reasoning."
+        ),
+        properties={
+            **COMMON_CONFIG,
+            "moves": {"type": "string", "description": "Comma-separated moves, e.g. left*3,up."},
+            "expect_rule_added": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Rules expected to be newly formed, e.g. rock is win.",
+            },
+            "expect_rule_removed": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Rules expected to be broken.",
+            },
+            "expect_moved": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Unit/text names expected to move, e.g. text_is.",
+            },
+            "expect_appeared": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Unit/text names expected to appear.",
+            },
+            "expect_disappeared": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Unit/text names expected to disappear.",
+            },
+            "expect_completion": {"type": "boolean", "description": "Expect completion status 3."},
+            "expect_completion_status": {"type": "integer", "description": "Expect a specific completion status."},
+            "allow_no_expectation": {"type": "boolean", "description": "Permit running without expected delta."},
+            "max_moves": {"type": "integer", "description": "Maximum expanded moves without allow_long. Default 8."},
+            "allow_long": {"type": "boolean", "description": "Allow action segments longer than max_moves."},
+            "dry_run": {"type": "boolean", "description": "Print planned action without moving."},
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "app_name": {"type": "string", "description": "Optional macOS app name override."},
+            "timeout": {"type": "number", "description": "Seconds to wait after each move."},
+            "delay": {"type": "number", "description": "Delay after each key press."},
+            "hold_ms": {"type": "integer", "description": "Milliseconds to hold each key."},
+            "method": {"type": "string", "enum": ["cgevent", "applescript"]},
+            "no_activate": {"type": "boolean", "description": "Do not activate Baba before sending."},
+            "pre_delay": {"type": "number", "description": "Delay after activating Baba."},
+            "focus": {"type": "string", "description": "Comma-separated unit names to show."},
+            "limit": {"type": "integer", "description": "Limit printed changed units per category."},
+        },
+        required=["moves"],
+    ),
     "restart_level": tool_schema(
         description="Restart the current level or map position using scripts/baba_restart.py.",
         properties={
@@ -264,6 +316,10 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "type": "boolean",
                 "description": "Allow recording without completion status 3. Use only for repair.",
             },
+            "allow_level_mismatch": {
+                "type": "boolean",
+                "description": "Repair-only: record a level different from the active attempt.",
+            },
             "no_run_updates": {"type": "boolean", "description": "Do not append run Markdown records."},
         },
         required=["moves"],
@@ -293,6 +349,19 @@ def add_value(command: list[str], args: dict[str, Any], key: str, flag: str) -> 
 def add_bool(command: list[str], args: dict[str, Any], key: str, flag: str) -> None:
     if as_bool(args, key):
         command.append(flag)
+
+
+def add_repeat(command: list[str], args: dict[str, Any], key: str, flag: str) -> None:
+    value = args.get(key)
+    if value is None or value == "":
+        return
+    if isinstance(value, list):
+        values = value
+    else:
+        values = [value]
+    for item in values:
+        if item is not None and str(item) != "":
+            command.extend([flag, str(item)])
 
 
 def script_command(script_name: str, script_args: list[str]) -> tuple[list[str], list[str]]:
@@ -482,6 +551,37 @@ def try_moves(args: dict[str, Any]) -> tuple[str, bool]:
     return run_script("baba_try.py", command, args)
 
 
+def check_moves(args: dict[str, Any]) -> tuple[str, bool]:
+    moves = args.get("moves")
+    if not isinstance(moves, str) or not moves.strip():
+        raise RpcError(-32602, "check_moves requires a non-empty moves string")
+    command: list[str] = [moves]
+    add_repeat(command, args, "expect_rule_added", "--expect-rule-added")
+    add_repeat(command, args, "expect_rule_removed", "--expect-rule-removed")
+    add_repeat(command, args, "expect_moved", "--expect-moved")
+    add_repeat(command, args, "expect_appeared", "--expect-appeared")
+    add_repeat(command, args, "expect_disappeared", "--expect-disappeared")
+    add_bool(command, args, "expect_completion", "--expect-completion")
+    add_value(command, args, "expect_completion_status", "--expect-completion-status")
+    add_bool(command, args, "allow_no_expectation", "--allow-no-expectation")
+    add_value(command, args, "max_moves", "--max-moves")
+    add_bool(command, args, "allow_long", "--allow-long")
+    add_bool(command, args, "dry_run", "--dry-run")
+    add_value(command, args, "command_timeout_seconds", "--command-timeout")
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "save_dir", "--save-dir")
+    add_value(command, args, "app_name", "--app-name")
+    add_value(command, args, "timeout", "--timeout")
+    add_value(command, args, "delay", "--delay")
+    add_value(command, args, "hold_ms", "--hold-ms")
+    add_value(command, args, "method", "--method")
+    add_bool(command, args, "no_activate", "--no-activate")
+    add_value(command, args, "pre_delay", "--pre-delay")
+    add_value(command, args, "focus", "--focus")
+    add_value(command, args, "limit", "--limit")
+    return run_script("baba_action_check.py", command, args)
+
+
 def restart_level(args: dict[str, Any]) -> tuple[str, bool]:
     command: list[str] = []
     add_value(command, args, "config", "--config")
@@ -534,6 +634,17 @@ def navigate_next(args: dict[str, Any]) -> tuple[str, bool]:
         if key in args:
             rules_args[key] = args[key]
     append_step(steps, "parse_rules", parse_rules(rules_args))
+    steps.append(
+        {
+            "name": "next",
+            "is_error": False,
+            "command": "python3 start_benchmark.py",
+            "cwd": str(ROOT),
+            "exit_code": 0,
+            "stdout": "Run MCP start_benchmark before solving or recording the entered level.",
+            "stderr": "",
+        }
+    )
     return aggregate_results(steps)
 
 
@@ -579,6 +690,7 @@ def record_pass(args: dict[str, Any]) -> tuple[str, bool]:
     add_value(command, args, "note", "--note")
     add_value(command, args, "hold_ms", "--hold-ms")
     add_bool(command, args, "allow_without_status", "--allow-without-status")
+    add_bool(command, args, "allow_level_mismatch", "--allow-level-mismatch")
     add_bool(command, args, "no_run_updates", "--no-run-updates")
     return run_script("baba_benchmark.py", command, args)
 
@@ -593,6 +705,7 @@ TOOL_HANDLERS = {
     "read_state": read_state,
     "parse_rules": parse_rules,
     "try_moves": try_moves,
+    "check_moves": check_moves,
     "restart_level": restart_level,
     "return_to_map": return_to_map,
     "navigate_next": navigate_next,

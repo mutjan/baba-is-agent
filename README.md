@@ -128,11 +128,38 @@ Example MCP config shape:
   "mcpServers": {
     "baba-is-you": {
       "command": "python3",
-      "args": ["/path/to/baba-is-agent/scripts/baba_mcp_server.py"]
+      "args": ["scripts/baba_mcp_server.py"]
     }
   }
 }
 ```
+
+### Project-Level MCP Setup
+
+If the agent supports project-scoped MCP configuration, install the server at
+the project level so future agents entering this repo see the same tools.
+
+Claude Code:
+
+```bash
+claude mcp add --scope project baba-is-you -- python3 scripts/baba_mcp_server.py
+claude mcp get baba-is-you
+claude mcp list
+```
+
+This writes or updates `.mcp.json` in the repo. Before committing that file,
+make sure it uses relative paths like `scripts/baba_mcp_server.py` and contains
+no secrets or user-specific `/Users/...` paths.
+
+Codex CLI currently uses the user's Codex config, so install it per user:
+
+```bash
+codex mcp add baba-is-you -- python3 "$(pwd)/scripts/baba_mcp_server.py"
+codex mcp list
+```
+
+Restart the agent session after installation, then call MCP `app_status` or
+`start_benchmark`.
 
 List exposed tools:
 
@@ -151,6 +178,7 @@ Current tools:
 - `read_state`
 - `parse_rules`
 - `try_moves`
+- `check_moves`
 - `restart_level`
 - `return_to_map`
 - `navigate_next`
@@ -192,6 +220,8 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   then prints rules, text map, object positions, and raw directions.
 - `scripts/baba_try.py`: sends a short move segment, waits for state refreshes,
   and prints meaningful state deltas.
+- `scripts/baba_action_check.py`: sends a short move segment and fails unless
+  the declared expected rule/object/completion delta occurs.
 - `scripts/baba_restart.py`: restarts the current level or world-map position.
 - `scripts/baba_return_to_map.py`: returns from the current level or sub-map to
   its parent map with `esc,down,enter`.
@@ -235,6 +265,18 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 - Added an efficiency protocol to `AGENTS.md` and `start_benchmark.py` so
   verbose agents stop exhaustive mental simulation and use short observable
   action segments instead.
+- Tightened the efficiency protocol with one-observable-target loops, 5-line
+  solving updates, and prompt guidance to avoid asking agents to expose long
+  internal thinking.
+- Added `scripts/baba_action_check.py` and MCP `check_moves` so agents validate
+  hypotheses by declared state delta instead of thinking-token simulation.
+- Added generic dead-corner guidance as a reusable Baba mechanic, without
+  turning it into level-specific coordinate hints.
+- Documented project-level MCP setup for agents that support `.mcp.json`, plus
+  the current Codex per-user MCP fallback.
+- Hardened benchmark state handling: stale active attempts now block solving,
+  `record_pass --level` refuses mismatched active records by default, and map
+  navigation tells agents to start the benchmark after entering a level.
 - Updated run templates so level notes and learned rules use step-score
   language, and the growth diary template avoids treating wall-clock time as
   the score.
