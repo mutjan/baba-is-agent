@@ -28,6 +28,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "input_delay": 0.02,
     "game_files_found": False,
     "state_exporter_installed": False,
+    "current_run_id": "",
 }
 
 
@@ -39,6 +40,7 @@ class BabaConfig:
     input_delay: float
     game_files_found: bool
     state_exporter_installed: bool
+    current_run_id: str
     config_path: Path
 
 
@@ -99,6 +101,15 @@ def refresh_config_status(path: Path, raw: dict[str, Any] | None = None) -> dict
     return updated
 
 
+def update_config_value(path: Path, key: str, value: Any) -> dict[str, Any]:
+    config_path = expand_path(str(path))
+    current = json.loads(config_path.read_text(encoding="utf-8"))
+    current[key] = value
+    updated = add_detected_status(current)
+    config_path.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+    return updated
+
+
 def write_default_config(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if EXAMPLE_CONFIG_PATH.exists():
@@ -135,6 +146,7 @@ def load_config(path: Path | None = None, *, refresh_status: bool = True) -> Bab
         input_delay=input_delay,
         game_files_found=bool_value(merged["game_files_found"]),
         state_exporter_installed=bool_value(merged["state_exporter_installed"]),
+        current_run_id=str(merged.get("current_run_id") or ""),
         config_path=config_path,
     )
 
@@ -142,14 +154,19 @@ def load_config(path: Path | None = None, *, refresh_status: bool = True) -> Bab
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
+    parser.add_argument("--set-current-run-id", help="Write current_run_id into the local config")
     args = parser.parse_args()
 
     config = load_config(args.config)
+    if args.set_current_run_id is not None:
+        update_config_value(config.config_path, "current_run_id", args.set_current_run_id)
+        config = load_config(config.config_path)
     print(f"config_path={config.config_path}")
     print(f"game_root={config.game_root}")
     print(f"save_dir={config.save_dir}")
     print(f"game_files_found={config.game_files_found}")
     print(f"state_exporter_installed={config.state_exporter_installed}")
+    print(f"current_run_id={config.current_run_id}")
     print(f"input_delay={config.input_delay}")
     return 0
 

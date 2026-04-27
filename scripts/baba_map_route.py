@@ -18,6 +18,7 @@ from pathlib import Path
 
 from baba_config import load_config
 from parse_baba_level import current_level, read_ini_like
+from read_baba_state import load_state
 
 
 DIRS = {
@@ -127,6 +128,31 @@ def coord_from_item(item: dict[str, str]) -> tuple[int, int] | None:
     if "X" not in item or "Y" not in item:
         return None
     return (parse_int(item["X"]), parse_int(item["Y"]))
+
+
+def live_cursor_coord(save_dir: Path, map_level: str) -> tuple[int, int] | None:
+    path = (save_dir / "codex_state.json").resolve()
+    try:
+        state = load_state(path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
+    except (OSError, SystemExit, ValueError):
+        return None
+
+    meta = state.get("meta", {})
+    if meta.get("level") != map_level:
+        return None
+
+    cursors = []
+    for unit in state.get("units", []):
+        if unit.get("name") != "cursor":
+            continue
+        if unit.get("dead") or not unit.get("visible", True):
+            continue
+        x = unit.get("x")
+        y = unit.get("y")
+        if isinstance(x, int) and isinstance(y, int):
+            cursors.append((x, y))
+
+    return cursors[0] if len(cursors) == 1 else None
 
 
 def infer_cursor(
@@ -278,14 +304,20 @@ def main() -> int:
                 break
     passable.add(selector)
 
-    cursor, cursor_source = infer_cursor(
-        selector,
-        passable,
-        visible_level_coords,
-        visible_path_coords,
-        parse_levelsurrounds(save_section.get("levelsurrounds")),
-        previous_coords,
-    )
+    live_cursor = live_cursor_coord(save_dir, map_level)
+    if live_cursor is not None:
+        passable.add(live_cursor)
+        cursor = live_cursor
+        cursor_source = "live_state"
+    else:
+        cursor, cursor_source = infer_cursor(
+            selector,
+            passable,
+            visible_level_coords,
+            visible_path_coords,
+            parse_levelsurrounds(save_section.get("levelsurrounds")),
+            previous_coords,
+        )
 
     path = shortest_path(cursor, target_coords, passable)
     if path is None:

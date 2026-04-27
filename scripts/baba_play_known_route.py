@@ -21,17 +21,30 @@ from parse_baba_level import current_level
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
-DEFAULT_ROUTES_PATH = SCRIPTS_DIR / "baba_known_routes.json"
+RUNS_ROOT = ROOT / "runs"
 
 
-def load_routes(path: Path = DEFAULT_ROUTES_PATH) -> dict[str, Any]:
+def default_routes_path(config: Any) -> Path:
+    if not config.current_run_id:
+        raise SystemExit(
+            "No current_run_id configured. Run "
+            "`python3 scripts/baba_config.py --set-current-run-id 001_agent_model` "
+            "or pass --routes."
+        )
+    return RUNS_ROOT / config.current_run_id / "baba_known_routes.json"
+
+
+def load_routes(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise SystemExit(f"Known route file does not exist: {path}")
     doc = json.loads(path.read_text(encoding="utf-8"))
     if doc.get("schema") != "codex-baba-known-routes-v1" or not isinstance(doc.get("routes"), dict):
         raise SystemExit(f"Unsupported known route file: {path}")
     return doc
 
 
-def save_routes(doc: dict[str, Any], path: Path = DEFAULT_ROUTES_PATH) -> None:
+def save_routes(doc: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 
 
@@ -107,7 +120,7 @@ def print_route(level: str, route: dict[str, Any], *, delay: float, hold_ms: int
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
-    parser.add_argument("--routes", type=Path, default=DEFAULT_ROUTES_PATH, help="Known routes JSON path")
+    parser.add_argument("--routes", type=Path, help="Known routes JSON path")
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
     parser.add_argument("--level", help="Level id to use. Defaults to save Previous.")
     parser.add_argument("--list", action="store_true", help="List known routes")
@@ -118,7 +131,8 @@ def main() -> int:
 
     config = load_config(args.config)
     save_dir = args.save_dir or config.save_dir
-    routes_doc = load_routes(args.routes)
+    routes_path = args.routes or default_routes_path(config)
+    routes_doc = load_routes(routes_path)
     routes = route_map(routes_doc)
 
     if args.list:

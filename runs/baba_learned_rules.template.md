@@ -28,5 +28,5 @@ runs/<number_agent_model>/baba_learned_rules.md
 ## 脚本、JSON 与 Markdown 边界
 
 - 脚本负责机械事实：读状态、发按键、等待刷新、比较差异、查询完成态、地图寻路、约束搜索。
-- `scripts/baba_known_routes.json` 负责机器可读路线和 benchmark 耗时。
+- `runs/<number_agent_model>/baba_known_routes.json` 负责该 run 的机器可读已知路线复放数据，不作为 benchmark 解法来源。
 - Markdown 负责判断经验：为什么选这个动作段、哪些分支失败、何时停、何时重置。

@@ -25,8 +25,10 @@ Continue playing the current save, one level at a time:
   Real records go under `runs/<number_agent_model>/`, for example
   `runs/001_codex_gpt55/`. Other agents must use their own run id.
 - Keep learned rules generic. Put machine-readable solved routes in
-  `scripts/baba_known_routes.json` and judgment-heavy level notes in the
-  agent-specific run directory.
+  `runs/<number_agent_model>/baba_known_routes.json` for separate replay use and
+  judgment-heavy level notes in the agent-specific run directory.
+- Benchmark mode is from-zero and must not use run-local `baba_known_routes.json`
+  as a solution source.
 
 ## Key Commands
 
@@ -45,6 +47,11 @@ python3 scripts/baba_config.py
 If `game_files_found=false`, fix `game_root` before parsing levels. If
 `state_exporter_installed=true`, the Lua state exporter is already installed;
 do not run the installer again unless repairing or uninstalling.
+Set `current_run_id` in `baba_config.json` before a benchmark run:
+
+```bash
+python3 scripts/baba_config.py --set-current-run-id 001_codex_gpt55
+```
 
 Read only the initial rules:
 
@@ -181,7 +188,8 @@ If the player is on the map instead of inside a level, use
   `game_files_found` and `state_exporter_installed` in ignored config.
 - `scripts/parse_baba_level.py`: static parser for current/specific levels.
 - `scripts/baba_send_keys.py`: verified CGEvent key sender.
-- `scripts/baba_map_route.py`: map route detector; good but still verify cursor source.
+- `scripts/baba_map_route.py`: map route detector; it prefers the live-state
+  cursor when available, then falls back to save/map metadata.
 - `lua/codex_state_export.lua`: optional live-state exporter loaded by Baba from `Data/Lua`.
 - `lua/codex_state_probe.lua`: minimal canary for `Data/Lua` loading and `world_data.txt` writes.
 - `scripts/install_baba_state_exporter.py`: installs/uninstalls the exporter.
@@ -190,10 +198,15 @@ If the player is on the map instead of inside a level, use
 - `scripts/baba_step.py`: sends each move and waits for the live state to update.
 - `scripts/baba_try.py`: sends a short action segment and prints state deltas for
   rules, moved units, disappeared units, and completion status.
-- `scripts/baba_known_routes.json`: route data plus benchmark timing fields.
-- `scripts/baba_play_known_route.py`: prints or executes known routes from JSON.
-- `scripts/baba_benchmark.py`: starts a known-route benchmark or local
-  state-guided attempt record, then updates route timing and
+- `scripts/baba_mcp_server.py`: optional dependency-free MCP stdio wrapper over
+  the core scripts. It exposes config/run setup, benchmark, state/rule reads,
+  move trials, restart, map routing, known-route replay, and pass recording. It
+  must stay thin; do not duplicate game logic into it.
+- `runs/<number_agent_model>/baba_known_routes.json`: route data for separate replay use.
+- `scripts/baba_play_known_route.py`: prints or executes known routes from the
+  current run's JSON, or an explicit `--routes` path.
+- `scripts/baba_benchmark.py`: starts a from-zero benchmark/local
+  state-guided attempt record, then updates
   `runs/<number_agent_model>/` notes on pass.
 - `runs/*.template.md`: publishable templates for per-agent run records.
 - `runs/001_codex_gpt55/`: local records from this Codex/GPT-5.5 run.

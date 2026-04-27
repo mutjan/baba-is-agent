@@ -31,9 +31,9 @@ Write a script when the task is mechanical, repeatable, and safer when exact:
   level.
 
 Do not hard-code level-specific solved routes inside generic Python logic.
-Known solved routes live as data in `scripts/baba_known_routes.json`; the
-generic replay entry is `scripts/baba_play_known_route.py`. Judgment-heavy
-notes belong in each agent's run directory, for example
+Known solved routes live as run-local data in
+`runs/<number_agent_model>/baba_known_routes.json`; the generic replay entry is
+`scripts/baba_play_known_route.py`. Judgment-heavy notes belong in each agent's run directory, for example
 `runs/001_codex_gpt55/baba_level_notes.md`.
 
 ## What Belongs In Markdown
@@ -46,9 +46,9 @@ Write Markdown when the information needs judgment or context:
 - when to prefer interactive experiments over route search;
 - human-facing notes for live play, such as why a move segment is interesting.
 
-Use `docs/` for reusable method. Use `scripts/baba_known_routes.json` for
-machine-readable routes and timing. Use root `runs/*.template.md` files as the
-publishable format contract. Real agent records go under
+Use `docs/` for reusable method. Use each run directory's
+`baba_known_routes.json` only for machine-readable known-route replay data. Use
+root `runs/*.template.md` files as the publishable format contract. Real agent records go under
 `runs/<number_agent_model>/`, such as `runs/001_codex_gpt55/`.
 
 ## Benchmark Entry
@@ -59,19 +59,16 @@ When handing the project to a new agent, start with:
 python3 scripts/baba_benchmark.py
 ```
 
-If the current level has a known route, the benchmark runner restarts the level,
-executes the route, times from the first sent key, stops when completion
-evidence is observed, updates `scripts/baba_known_routes.json`, and appends
-local run records.
-
-If there is no known route, it creates
-`runs/<number_agent_model>/baba_benchmark_active.json`, appends a start record,
-and prints the state-guided commands to continue with. Other agents should pass
-their own run id, for example `--run-id 002_claude_sonnet`. After an
-interactive solve, record the route with:
+Benchmark mode deliberately ignores run-local `baba_known_routes.json`: it
+should measure a model's learning and solving ability from the current state. It
+creates `runs/<number_agent_model>/baba_benchmark_active.json`, appends a start
+record, and prints the state-guided commands to continue with. Other agents
+should set `current_run_id` in config, for example
+`python3 scripts/baba_config.py --set-current-run-id 002_claude_sonnet`. After
+an interactive solve, record the route with:
 
 ```bash
-python3 scripts/baba_benchmark.py --run-id 001_codex_gpt55 --record-pass --moves '<verified full route>' --note '<short summary>'
+python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'
 ```
 
 For every passed level, keep these four local files current inside that
@@ -80,7 +77,14 @@ agent-specific run directory:
 - `baba_benchmark_log.md`: mechanical benchmark facts and evidence.
 - `baba_level_notes.md`: per-level route, checkpoints, coordinates, and result.
 - `baba_learned_rules.md`: reusable lessons, or a note that no new generic lesson was found.
-- `baba_growth_diary_xiaohongshu.md`: human-facing story material from the level.
+- `baba_growth_diary.md`: first-person learning/growth diary in the user's language.
+
+Agents that support MCP may use `scripts/baba_mcp_server.py` for the same loop.
+The MCP server is a thin wrapper over the scripts; it must not become a second
+implementation of state reading, key input, or benchmark recording.
+Its high-frequency tools are `config_status`, `set_current_run_id`,
+`start_benchmark`, `read_state`, `parse_rules`, `try_moves`, `restart_level`,
+`map_route`, `play_known_route`, and `record_pass`.
 
 ## Interactive Loop
 

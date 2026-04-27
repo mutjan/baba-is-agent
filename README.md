@@ -35,6 +35,44 @@ The current tools do not edit save files to win levels.
 The first key-send may also trigger macOS prompts for Automation or
 Accessibility. Grant access to the process that runs the scripts.
 
+## Installation
+
+Clone the repo and enter it:
+
+```bash
+git clone https://github.com/mutjan/baba-is-agent.git
+cd baba-is-agent
+```
+
+Create and inspect the local config:
+
+```bash
+python3 scripts/baba_config.py
+```
+
+On first run this creates `baba_config.json` and stops. Review `game_root` and
+`save_dir`, then rerun the same command. The output should show:
+
+```text
+game_files_found=True
+```
+
+Install the live state exporter only if `state_exporter_installed=False`:
+
+```bash
+python3 scripts/install_baba_state_exporter.py
+```
+
+Restart Baba Is You after installing, then verify state reads:
+
+```bash
+python3 scripts/read_baba_state.py
+python3 scripts/parse_baba_level.py --rules-only
+```
+
+If `state_exporter_installed=True`, skip the installer. That flag means the game
+already has the Codex Lua exporter in place.
+
 ## Configuration
 
 The repo does not store machine-specific paths. First run creates a local
@@ -54,7 +92,8 @@ Default config:
   "app_name": "Baba Is You",
   "input_delay": 0.02,
   "game_files_found": false,
-  "state_exporter_installed": false
+  "state_exporter_installed": false,
+  "current_run_id": ""
 }
 ```
 
@@ -65,11 +104,14 @@ The generated config refreshes `game_files_found` and
 `state_exporter_installed` from the local filesystem. Treat
 `state_exporter_installed=true` as the "game is already modded" flag and do not
 rerun the exporter installer unless you are intentionally repairing it.
+Set `current_run_id` to the current agent/model run folder, such as
+`001_codex_gpt55` or `002_claude_sonnet`.
 
 Refresh and inspect local config status:
 
 ```bash
 python3 scripts/baba_config.py
+python3 scripts/baba_config.py --set-current-run-id 001_codex_gpt55
 ```
 
 ## Basic Usage
@@ -173,13 +215,88 @@ Run the benchmark entry for a new agent handoff:
 python3 scripts/baba_benchmark.py
 ```
 
-The benchmark runner uses `scripts/baba_known_routes.json` when a route is
-known. It times a level from the first sent key until completion evidence is
-read, records timing back into that JSON, and appends local notes under
-`runs/<number_agent_model>/`. If no known route exists, it starts a local
-attempt record and prints the state-guided commands to continue interactively.
-Use `--run-id 002_agent_model` or `BABA_RUN_ID=002_agent_model` for another
-agent. Only the root `runs/*.template.md` files are intended for Git.
+Benchmark mode starts a
+fresh state-guided attempt, times the agent's learning/solving process, and
+appends local notes under `runs/<number_agent_model>/`. Set `current_run_id` in
+`baba_config.json` or pass `--run-id 002_agent_model` for another agent. Only
+the root `runs/*.template.md` files are intended for Git.
+
+Recommended setup for a benchmark agent:
+
+```bash
+python3 scripts/baba_config.py --set-current-run-id 002_agent_model
+python3 scripts/baba_benchmark.py
+python3 scripts/read_baba_state.py
+python3 scripts/parse_baba_level.py --rules-only
+```
+
+Then solve interactively with short state-readable experiments:
+
+```bash
+python3 scripts/baba_try.py '<short move segment>'
+```
+
+After the level is solved, record the benchmark result:
+
+```bash
+python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'
+```
+
+## Optional MCP Server
+
+Agents that support MCP can use the dependency-free stdio wrapper instead of
+remembering shell commands. The MCP server is intentionally thin: it only calls
+the existing scripts and returns command, exit code, stdout, and stderr.
+
+Example MCP command:
+
+```bash
+python3 scripts/baba_mcp_server.py
+```
+
+Example MCP config shape:
+
+```json
+{
+  "mcpServers": {
+    "baba-is-you": {
+      "command": "python3",
+      "args": ["/path/to/baba-is-agent/scripts/baba_mcp_server.py"]
+    }
+  }
+}
+```
+
+Exposed tools:
+
+- `config_status`
+- `set_current_run_id`
+- `start_benchmark`
+- `read_state`
+- `parse_rules`
+- `try_moves`
+- `restart_level`
+- `map_route`
+- `play_known_route`
+- `record_pass`
+
+Benchmark rules are unchanged: start from the current state, do not use
+run-local `baba_known_routes.json` as a solution source, and record pass only
+after completion status becomes `3`.
+Only `try_moves`, `restart_level` without `dry_run`, `map_route` with
+`execute=true`, and `play_known_route` with `execute=true` send game input.
+
+Prompt for another agent:
+
+```text
+根据第一性原理，从当前 Baba Is You 状态开始做一次独立 benchmark。
+不要使用当前 run 目录里的 baba_known_routes.json 作为解法来源。
+先运行 python3 scripts/baba_config.py 检查 game_files_found、state_exporter_installed 和 current_run_id。
+如果 current_run_id 不是你的 runs/<number_agent_model> 目录名，先用 python3 scripts/baba_config.py --set-current-run-id <number_agent_model> 设置。
+然后运行 python3 scripts/baba_benchmark.py 开始计时。
+使用 python3 scripts/read_baba_state.py、python3 scripts/parse_baba_level.py --rules-only 和 python3 scripts/baba_try.py '<moves>' 交互式缩小搜索空间。
+通关后运行 python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>' 记录成绩。
+```
 
 See `docs/baba_state_guided_play_method.md` for the interactive
 state-reader-guided workflow and when to use short experiments instead of full
@@ -194,17 +311,16 @@ route search.
   `MOVE` reasoning.
 - `scripts/baba_send_keys.py`: compiles and calls the CoreGraphics helper by default.
 - `scripts/baba_cgevent_keys.c`: tiny macOS key-event sender.
-- `scripts/baba_map_route.py`: infers current map cursor and next-level route from save
-  and map metadata.
+- `scripts/baba_map_route.py`: infers current map cursor and next-level route
+  from live state when available, with save/map metadata fallback.
 - `scripts/baba_search_route.py`: generic macro-push searcher for building text
   rules from the current level state.
-- `scripts/baba_known_routes.json`: machine-readable known routes plus benchmark
-  timing fields.
+- `runs/<current_run_id>/baba_known_routes.json`: local machine-readable known
+  routes for replay.
 - `scripts/baba_play_known_route.py`: prints or executes known routes from the
-  JSON route data.
-- `scripts/baba_benchmark.py`: handoff entry that runs known routes, measures
-  completion time, and maintains local per-agent `runs/<number_agent_model>/`
-  records.
+  current run's JSON route data, or an explicit `--routes` path.
+- `scripts/baba_benchmark.py`: handoff entry that starts a from-zero benchmark
+  attempt and maintains local per-agent `runs/<number_agent_model>/` records.
 - `lua/codex_state_export.lua`: optional Baba `Data/Lua` hook that stores live
   runtime units and rules in the save file after turns.
 - `lua/codex_state_probe.lua`: minimal canary that checks Baba can load a
@@ -218,6 +334,9 @@ route search.
   state after each turn.
 - `scripts/baba_try.py`: sends a short move segment, waits for state refreshes,
   and prints rules/units/completion changes instead of a full state dump.
+- `scripts/baba_mcp_server.py`: optional dependency-free MCP stdio wrapper
+  around config, benchmark, state, rules, move, restart, map-route,
+  known-route, and pass-record scripts.
 
 ## Changelog
 
@@ -234,11 +353,12 @@ route search.
   state-readable checkpoint.
 - Moved the default key interval into `baba_config.json` as `input_delay`
   after testing the current level; the checked-in default is `0.02` seconds.
-- Added `scripts/baba_benchmark.py` and moved known solved routes into
-  `scripts/baba_known_routes.json` so a new agent can start from one entry,
-  replay known routes, time completion, and write local run records.
+- Added `scripts/baba_benchmark.py` for from-zero state-guided benchmark runs,
+  and moved known solved routes into each run directory for separate replay use.
 - Added config status detection so generated `baba_config.json` records whether
   Baba game files exist and whether the Lua state exporter is already installed.
+- Added optional `scripts/baba_mcp_server.py` as a thin MCP wrapper over the
+  existing scripts, keeping CLI scripts as the source of truth.
 
 ## Current Limits
 

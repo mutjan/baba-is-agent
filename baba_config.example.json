@@ -4,5 +4,6 @@
   "app_name": "Baba Is You",
   "input_delay": 0.02,
   "game_files_found": false,
-  "state_exporter_installed": false
+  "state_exporter_installed": false,
+  "current_run_id": ""
 }
