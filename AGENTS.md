@@ -1,0 +1,102 @@
+# Baba Agent Contract
+
+根据第一性原理，本项目的目标不是复现已有路线，而是让 agent 从当前真实状态出发，交互式学习并通关 Baba Is You 关卡，同时留下可验证的 benchmark 记录。
+
+## 目标与成功标准
+
+- 每次接手先确认真实状态：配置、当前 save、当前关卡、初始规则、是否在地图。
+- Benchmark 是从零开始的学习和通关能力测试，不要把当前 run 目录里的 `baba_known_routes.json` 当成解法来源。
+- 通关证据只有一个硬标准：对应关卡 save completion status 变成 `3`。
+- 每过一关，停止本关计时并更新当前 run 目录里的记录文件。
+- 回答用户时使用用户的语言；本仓库协作默认每次回答以“根据第一性原理……”开头。
+
+## 协作输出规则
+
+- 先确认真实目标、约束和成功标准，不要套用惯例。
+- 如果目标、成功标准或风险边界不清晰且会影响实现方向，先向用户提问。
+- 如果目标清晰但当前路径不是最简单、低风险、可验证的方案，直接指出更好的替代方案。
+- 需要决策时按 MECE 原则覆盖主要可能性。
+- 默认简洁输出：结论、关键理由、改动点、验证结果。
+
+## 首选入口
+
+新 clone 或新 agent 接手后，从根目录运行：
+
+```bash
+python3 start_benchmark.py --run-id 001_agent_model
+```
+
+如果 MCP 可用，优先通过 MCP 调用 `start_benchmark`，不要优先直接调用裸脚本。裸脚本是 fallback 和调试入口。
+
+干跑检查：
+
+```bash
+python3 start_benchmark.py --dry-run --skip-primer --no-inspect
+```
+
+## MCP 优先流程
+
+MCP 工具可用时，默认按这个顺序工作：
+
+1. `inspect_state`
+2. `set_current_run_id`，仅当当前 run id 不对或为空
+3. `start_benchmark`
+4. `try_moves`，用最短的有意义行动段测试假设
+5. `restart_level`，当实验把局面弄坏或需要回到干净检查点
+6. `navigate_next`，当当前状态是世界地图或 overworld
+7. `record_pass`，仅当完成态已经是 `3`
+
+只在 MCP 不可用或正在调试 MCP wrapper 时回退到 `python3 scripts/...`，并说明原因。
+
+## 地图与普通关卡的区分
+
+- 如果当前关卡是世界地图或 overworld，例如 `106level`、`177level`，不要按普通 Baba 关卡求解。
+- 地图上没有 Baba 对象不是错误。地图的可控对象是 live-state 里的 `cursor`，控制模型是 `cursor is select`。
+- 地图状态下使用 `navigate_next` 或 `map_route` 进入未完成关卡；进入后再读取普通关卡规则。
+
+## Baba 基础规则提示
+
+- 规则通常由可见文字组成，形式是 `NOUN IS PROPERTY`。
+- `YOU` 标记可控制对象；`WIN` 标记胜利对象；`STOP` 阻挡移动；`DEFEAT` 会消灭 `YOU`。
+- `SHUT` 和 `OPEN` 接触时会互相移除，例如钥匙开门。
+- 文字默认可推动。`TEXT IS PUSH` 是基础规则，可能生效但不会在关卡里显式摆出来。
+- `PUSH` 的含义是：`YOU` 对象朝某方向移动时，可以把对应物体或文字向前推一格，前提是整条被推动链背后有空位。
+- 如果推动链背后是 `STOP`、地图边界或不可推动阻挡物，推动不会发生。
+- 推动文字可以创建或打断规则；移动 `IS`、`YOU`、`WIN`、`STOP`、`PUSH`、`OPEN`、`SHUT` 或名词文字通常是解题核心。
+
+## 交互式解题循环
+
+- 不需要先知道完整解法。先读状态，提出一个能被状态验证的小假设。
+- 有明确预期时，不必一步一读；可以走到下一个有意义变化为止，例如 `left*3` 推开某个 `IS`。
+- 优先让游戏动起来：短行动段比重计算搜索更适合直播和小模型接手。
+- 每次 `try_moves` 后读 delta：规则新增/消失、目标对象移动、对象消失、完成态变化。
+- 如果分支错了，用 `restart_level` 回到干净状态，再缩短或修正假设。
+- 只有当问题主要是移动少量文字、目标规则明确、且搜索模型覆盖这些机制时，才使用重搜索。
+
+## 记录要求
+
+当前 run 目录来自 `baba_config.json` 的 `current_run_id`，路径形如：
+
+```text
+runs/<number_agent_model>/
+```
+
+例如 `runs/001_codex_gpt55/` 或 `runs/002_claude_sonnet/`。不要写入固定的 `default_run_id`。
+
+每过一关，当前 run 目录里的四个文件都要更新：
+
+- `baba_benchmark_log.md`：机械 benchmark 事实、计时、证据。
+- `baba_level_notes.md`：关卡路线、关键检查点、坐标和结果。
+- `baba_learned_rules.md`：可复用经验；没有新经验时写明没有。
+- `baba_growth_diary.md`：第一人称学习成长日记，使用用户的语言，不要写成路线日志。
+
+根目录 `runs/*.template.md` 是公开模板。真实 run 子目录默认不提交。
+
+## Known Routes 边界
+
+- `runs/<run_id>/baba_known_routes.json` 是独立 replay 数据，不是 benchmark 解题来源。
+- `play_known_route` 可以用于回放或校验旧路线，但 benchmark 模式必须记录从当前状态学习、尝试、通过的过程。
+
+## 安装与配置边界
+
+安装、配置、MCP server 配置、工具清单放在 `README.md`。本文件只规定 agent 接手后的目标、行为、风险边界和记录要求。

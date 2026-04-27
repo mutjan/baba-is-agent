@@ -53,7 +53,26 @@ root `runs/*.template.md` files as the publishable format contract. Real agent r
 
 ## Benchmark Entry
 
-When handing the project to a new agent, start with:
+The canonical target and operation contract for new agents lives in
+`AGENTS.md`. This document explains the reusable play method.
+
+When handing the project to a new agent after installation, use the root entry:
+
+```bash
+python3 start_benchmark.py --run-id 001_agent_model
+```
+
+If MCP is available, call the equivalent MCP `start_benchmark` tool and then
+continue with MCP tools:
+
+1. `inspect_state`
+2. `set_current_run_id` when needed
+3. `start_benchmark`
+4. `try_moves`
+5. `record_pass` after completion status is `3`
+
+Use lower-level script entries only when MCP is unavailable or when debugging
+the wrapper:
 
 ```bash
 python3 scripts/baba_benchmark.py
@@ -63,9 +82,10 @@ Benchmark mode deliberately ignores run-local `baba_known_routes.json`: it
 should measure a model's learning and solving ability from the current state. It
 creates `runs/<number_agent_model>/baba_benchmark_active.json`, appends a start
 record, and prints the state-guided commands to continue with. Other agents
-should set `current_run_id` in config, for example
-`python3 scripts/baba_config.py --set-current-run-id 002_claude_sonnet`. After
-an interactive solve, record the route with:
+should set `current_run_id` with `set_current_run_id`. After an interactive
+solve, use `record_pass`.
+
+Script fallback for recording a pass:
 
 ```bash
 python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'
@@ -82,9 +102,9 @@ agent-specific run directory:
 Agents that support MCP may use `scripts/baba_mcp_server.py` for the same loop.
 The MCP server is a thin wrapper over the scripts; it must not become a second
 implementation of state reading, key input, or benchmark recording.
-Its high-frequency tools are `config_status`, `set_current_run_id`,
-`start_benchmark`, `read_state`, `parse_rules`, `try_moves`, `restart_level`,
-`map_route`, `play_known_route`, and `record_pass`.
+Its high-frequency tools are `inspect_state`, `set_current_run_id`,
+`start_benchmark`, `try_moves`, `restart_level`, `navigate_next`, `map_route`,
+`play_known_route`, and `record_pass`.
 
 ## Interactive Loop
 
@@ -94,6 +114,11 @@ Start every new level with:
 python3 scripts/read_baba_state.py
 python3 scripts/parse_baba_level.py --rules-only
 ```
+
+If the current level is a world map/overworld, stop normal level solving. The
+absence of a Baba object is not an error on the map; navigation is driven by the
+live-state `cursor` and `cursor is select`. Use `map_route` to enter a real
+level, then start the normal loop.
 
 Then choose one hypothesis. Good hypotheses have a visible or state-readable
 effect, for example:

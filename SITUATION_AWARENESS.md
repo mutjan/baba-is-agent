@@ -1,258 +1,62 @@
 # Baba Is You Situation Awareness
 
-This repo lets Codex read local Baba Is You files and send local macOS key events. Use this file first when taking over a play session.
-
-## Current Goal
-
-Continue playing the current save, one level at a time:
-
-1. Confirm the real current state from save files.
-2. Enter the next level from the map only after verifying the real cursor.
-3. After entering any new level, read and restate its initial active rules before solving.
-4. Run the rule-mobility analysis: identify which initial text rules can actually be pushed, and which pushes preserve the current `YOU` rule.
-5. Solve by combining parser output with short in-game feedback loops. Prefer a
-   meaningful move segment such as `left*3` over mechanical one-step polling
-   when the expected state change is clear.
-6. Verify success from save status, not from command exit codes.
-
-## Important User Preferences
-
-- Start answers with `根据第一性原理...`.
-- Do not use web search for solutions. Think locally and use game feedback.
-- Use screenshots only when local parsing and game behavior conflict; screenshots are token-expensive.
-- Use file coordinates only. The file coordinate system includes an outer border; the actual movable range is `x=1..width-2`, `y=1..height-2`.
-- Root `runs/*.template.md` files are the only run files meant for Git.
-  Real records go under `runs/<number_agent_model>/`, for example
-  `runs/001_codex_gpt55/`. Other agents must use their own run id.
-- Keep learned rules generic. Put machine-readable solved routes in
-  `runs/<number_agent_model>/baba_known_routes.json` for separate replay use and
-  judgment-heavy level notes in the agent-specific run directory.
-- Benchmark mode is from-zero and must not use run-local `baba_known_routes.json`
-  as a solution source.
-
-## Key Commands
-
-Read current level:
-
-```bash
-python3 scripts/parse_baba_level.py
-```
-
-Inspect local config and mod status:
-
-```bash
-python3 scripts/baba_config.py
-```
-
-If `game_files_found=false`, fix `game_root` before parsing levels. If
-`state_exporter_installed=true`, the Lua state exporter is already installed;
-do not run the installer again unless repairing or uninstalling.
-Set `current_run_id` in `baba_config.json` before a benchmark run:
-
-```bash
-python3 scripts/baba_config.py --set-current-run-id 001_codex_gpt55
-```
-
-Read only the initial rules:
-
-```bash
-python3 scripts/parse_baba_level.py --rules-only
-```
-
-Read a specific level:
-
-```bash
-python3 scripts/parse_baba_level.py --world baba --level 6level
-```
-
-Detect map route:
-
-```bash
-python3 scripts/baba_map_route.py
-python3 scripts/baba_map_route.py 6level
-```
-
-When `--execute` succeeds, `baba_map_route.py` now automatically prints the entered level's initial active rules. If you enter a level manually with `baba_send_keys.py`, immediately run `python3 scripts/parse_baba_level.py --rules-only` and restate those rules in chat before solving.
-
-Send keys:
-
-```bash
-python3 scripts/baba_send_keys.py 'right,left,up'
-```
-
-Install live state exporter:
-
-```bash
-python3 scripts/install_baba_state_exporter.py
-```
-
-This installs only `Data/Lua/codex_state_export.lua` by default. It deliberately
-does not patch `Data/modsupport.lua` or `Data/syntax.lua`; those switches exist
-only for advanced debugging. Restart Baba Is You after installing, then read the
-state stored in the current save file's `[codex_state]` group:
-
-```bash
-python3 scripts/read_baba_state.py
-```
-
-After a fresh launch, enter a level with `enter,enter`, wait about 3 seconds for
-the menu-to-map transition, then send `enter` again. Reading state too early can
-correctly show the world map rather than the level.
-
-Safer canary before the full exporter:
-
-```bash
-python3 scripts/install_baba_state_exporter.py --probe
-python3 scripts/read_baba_probe.py
-```
-
-The probe only writes `[codex_probe]` in `Data/Worlds/<world>/world_data.txt`.
-Remove it with:
-
-```bash
-python3 scripts/install_baba_state_exporter.py --probe --uninstall
-```
-
-For turn-by-turn feedback, send moves through the state-aware wrapper:
-
-```bash
-python3 scripts/baba_step.py 'right,up'
-```
-
-For interactive play, send a short hypothesis segment and print only the state
-delta:
-
-```bash
-python3 scripts/baba_try.py 'left*3'
-```
-
-Restart current level when stuck:
-
-```bash
-python3 scripts/baba_restart.py
-```
-
-This same restart helper works both inside a level and on the world map.
-
-Known route lookup:
-
-```bash
-python3 scripts/baba_play_known_route.py --list
-python3 scripts/baba_play_known_route.py --level 2level
-```
-
-Benchmark handoff entry:
-
-```bash
-python3 scripts/baba_benchmark.py
-```
-
-Constrained route search:
-
-```bash
-python3 scripts/baba_search_route.py --analyze
-python3 scripts/baba_search_route.py --make-rule flag is win
-```
-
-This script is generic. It uses Level 6's reusable method: derive blockers from
-active rules, search only relevant movable text, preserve YOU, and widen
-`--pattern-margin` only if the small-window search fails.
+This file is a lightweight current-save handoff. The canonical agent objective,
+operating method, benchmark rules, and game primer live in `AGENTS.md`.
 
 ## Current Save Snapshot
 
-At the time this handoff was last updated:
+Last local dry-run of `start_benchmark.py` saw:
 
-- `slot=2`
+- `slot=0`
 - `world=baba`
-- `Previous=15level`
-- `leveltree=106level,177level`
-- Completed: `0level=3`, `1level=3`, `2level=3`, `3level=3`, `4level=3`, `5level=3`, `6level=3`, `10level=3`, `20level=3`, `90level=3`, `93level=3`, `189level=3`, `209level=3`, `212level=3`
-- Uncompleted/unlocked seen in save: `8level=2`, `15level=2`, `210level=2`, `211level=2`, `177level=2`
+- `Previous=3level`
+- level name: `out of reach`
 
-The player has completed `189level / now what is this?` and the current save
-now points at `15level / novice locksmith`. Before solving or executing any map
-route, re-run:
+This is orientation only. The game may have moved since this file was written.
+Before solving or navigating, re-read live state:
 
 ```bash
 python3 scripts/read_baba_state.py
 python3 scripts/parse_baba_level.py --rules-only
 ```
 
-If the player is on the map instead of inside a level, use
-`python3 scripts/baba_map_route.py` to re-detect the real cursor.
+If the player is on the map instead of inside a level, use MCP `navigate_next`
+or script fallback:
+
+```bash
+python3 scripts/baba_map_route.py
+```
 
 ## Files To Know
 
-- `README.md`: repo overview.
+- `AGENTS.md`: canonical agent target, operation method, benchmark rules, and
+  game primer.
+- `README.md`: installation, configuration, MCP setup, and tool reference.
+- `start_benchmark.py`: root first-run handoff entry for newly assigned agents.
+- `scripts/baba_mcp_server.py`: thin MCP stdio wrapper over the core scripts.
 - `scripts/baba_config.py`: local config creator/status refresher. It updates
   `game_files_found` and `state_exporter_installed` in ignored config.
+- `scripts/read_baba_state.py`: reads the current exported save-group state,
+  with legacy JSON fallback.
 - `scripts/parse_baba_level.py`: static parser for current/specific levels.
-- `scripts/baba_send_keys.py`: verified CGEvent key sender.
-- `scripts/baba_map_route.py`: map route detector; it prefers the live-state
-  cursor when available, then falls back to save/map metadata.
-- `lua/codex_state_export.lua`: optional live-state exporter loaded by Baba from `Data/Lua`.
-- `lua/codex_state_probe.lua`: minimal canary for `Data/Lua` loading and `world_data.txt` writes.
-- `scripts/install_baba_state_exporter.py`: installs/uninstalls the exporter.
-- `scripts/read_baba_probe.py`: reads the canary result from `world_data.txt`.
-- `scripts/read_baba_state.py`: reads the current exported save-group state, with legacy JSON fallback.
-- `scripts/baba_step.py`: sends each move and waits for the live state to update.
-- `scripts/baba_try.py`: sends a short action segment and prints state deltas for
-  rules, moved units, disappeared units, and completion status.
-- `scripts/baba_mcp_server.py`: optional dependency-free MCP stdio wrapper over
-  the core scripts. It exposes config/run setup, benchmark, state/rule reads,
-  move trials, restart, map routing, known-route replay, and pass recording. It
-  must stay thin; do not duplicate game logic into it.
-- `runs/<number_agent_model>/baba_known_routes.json`: route data for separate replay use.
-- `scripts/baba_play_known_route.py`: prints or executes known routes from the
-  current run's JSON, or an explicit `--routes` path.
-- `scripts/baba_benchmark.py`: starts a from-zero benchmark/local
-  state-guided attempt record, then updates
-  `runs/<number_agent_model>/` notes on pass.
+- `scripts/baba_try.py`: sends a short action segment and prints state deltas.
+- `scripts/baba_restart.py`: restarts the current level or map position.
+- `scripts/baba_map_route.py`: route detector for world map navigation; it
+  prefers the live-state cursor when available.
+- `scripts/baba_benchmark.py`: starts/stops timing and updates run records.
 - `runs/*.template.md`: publishable templates for per-agent run records.
-- `runs/001_codex_gpt55/`: local records from this Codex/GPT-5.5 run.
-- `docs/baba_level_parsing_method.md`: parser method and coordinate notes.
-- `docs/baba_state_guided_play_method.md`: state-reader-guided play loop and
-  script-vs-Markdown boundary.
-- `dev/baba_control_handoff.md`: longer historical handoff.
+- `docs/baba_state_guided_play_method.md`: reusable explanation of the
+  state-reader-guided play loop.
 
-## Critical Rules
+## Critical Evidence Notes
 
-- `frontmost=Chowdren` only proves the game process is focused; it does not prove movement or success.
+- `frontmost=Chowdren` only proves the game process is focused; it does not
+  prove movement or success.
 - A level is complete only when its save field becomes `3`.
-- Use the configured `input_delay` between key presses. The current default is
-  `0.02s`; if another machine drops inputs, raise `input_delay` in
-  `baba_config.json`. For long routes, keep the cgevent hold at least `90ms`;
-  route notes may specify a higher hold such as `140ms`.
-- Expand `AND` rules when restating initial rules, e.g. `BABA IS YOU AND SINK` means both `BABA IS YOU` and `BABA IS SINK`.
-- If Lua exporter work causes startup errors, immediately run
+- Use the configured `input_delay`; the checked-in default is `0.02s`.
+- Text blocks are pushable by default because `TEXT IS PUSH` is a base rule.
+- If `scripts/read_baba_state.py` has fresh output, prefer it over static
+  `.l/.ld` parsing for turn-by-turn object and text positions.
+- If Lua exporter work causes startup errors, run
   `python3 scripts/install_baba_state_exporter.py --uninstall` and restart Baba
   before doing more experiments.
-- Text blocks are pushable by default.
-- `B` in parser output means real `baba`; `M` means `brick`.
-- Do not treat the outer border as walkable.
-- If a route fails, restart with `python3 scripts/baba_restart.py`, then try a shorter or corrected route.
-- If `scripts/read_baba_state.py` has fresh output, prefer it over static `.l/.ld` parsing
-  for turn-by-turn object and text positions.
-- When using the live exporter, stop each move segment at a meaningful
-  checkpoint: rules added/removed, key text moved into place, object removed, or
-  level completion. Use `baba_try.py` for this concise delta.
-
-## Recent Proven Routes
-
-See `runs/001_codex_gpt55/baba_level_notes.md` for details. Most recent:
-
-```text
-209level / lock:
-up,left*3,down,right*9,right*2,up,right*3,down,left*7,up,left,down*5,right,down,left*3,down,left,up,right*3,up,left,up,right,up*3,right*6,up,right,down*5
-```
-
-Use `--delay 0.5 --hold-ms 140` for this route. It completed with `209level=3`.
-
-`189level / now what is this?`:
-
-```text
-left*3,up*7,right*3,down,right*2,up,left*3,down,left,up*2,left,down,left,up,left
-```
-
-It breaks `FLAG IS STOP`, builds `FLAG IS WIN` around the fixed upper `IS`, and
-completed with `189level=3`.

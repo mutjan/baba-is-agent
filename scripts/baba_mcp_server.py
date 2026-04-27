@@ -80,13 +80,31 @@ TOOLS: dict[str, dict[str, Any]] = {
         required=["run_id"],
     ),
     "start_benchmark": tool_schema(
-        description="Start or resume a from-zero benchmark attempt using scripts/baba_benchmark.py.",
+        description="Run the root start_benchmark.py onboarding entry for a from-zero benchmark attempt.",
         properties={
             **COMMON_CONFIG,
             "run_id": {"type": "string", "description": "Optional runs/<run_id> directory name."},
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
             "force_new": {"type": "boolean", "description": "Start a new attempt even if one is active."},
             "enter_next": {"type": "boolean", "description": "Enter the next map level before starting."},
             "dry_run": {"type": "boolean", "description": "Print planned action without writing files or sending keys."},
+            "skip_primer": {"type": "boolean", "description": "Do not print the Baba rules primer."},
+            "no_inspect": {"type": "boolean", "description": "Do not print current state and rules after starting."},
+            "state_limit": {"type": "integer", "description": "Limit read_baba_state groups during inspection."},
+            "after_restart_wait": {"type": "number", "description": "Wait passed to baba_benchmark.py."},
+        },
+    ),
+    "inspect_state": tool_schema(
+        description="Run config_status, read_state, and parse_rules in one call for faster session startup.",
+        properties={
+            **COMMON_CONFIG,
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "state_path": {"type": "string", "description": "Optional legacy JSON state path override."},
+            "state_limit": {"type": "integer", "description": "Limit printed state rule/object groups."},
+            "rules_only": {
+                "type": "boolean",
+                "description": "When true, parse_rules uses --rules-only. Defaults to true.",
+            },
         },
     ),
     "read_state": tool_schema(
@@ -142,6 +160,23 @@ TOOLS: dict[str, dict[str, Any]] = {
             "app_name": {"type": "string", "description": "Optional macOS app name override."},
             "no_activate": {"type": "boolean", "description": "Do not activate Baba before sending."},
             "dry_run": {"type": "boolean", "description": "Print command without sending keys."},
+        },
+    ),
+    "navigate_next": tool_schema(
+        description="Execute map_route, then read_state --wait and parse_rules in one call.",
+        properties={
+            **COMMON_CONFIG,
+            "target": {"type": "string", "description": "Optional target level id, e.g. 1level."},
+            "game_root": {"type": "string", "description": "Optional Worlds directory override."},
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "enter_key": {"type": "string", "enum": ["enter", "confirm"]},
+            "hold_ms": {"type": "integer", "description": "Key hold passed to baba_send_keys.py."},
+            "state_wait_timeout": {"type": "number", "description": "Seconds to wait for entered live state."},
+            "state_limit": {"type": "integer", "description": "Limit printed state rule/object groups."},
+            "dry_run": {
+                "type": "boolean",
+                "description": "Plan the route without executing it.",
+            },
         },
     ),
     "map_route": tool_schema(
@@ -228,8 +263,14 @@ def script_command(script_name: str, script_args: list[str]) -> tuple[list[str],
     return actual, display
 
 
-def run_script(script_name: str, script_args: list[str], args: dict[str, Any]) -> tuple[str, bool]:
-    actual, display = script_command(script_name, script_args)
+def root_script_command(script_name: str, script_args: list[str]) -> tuple[list[str], list[str]]:
+    actual = [sys.executable, str(ROOT / script_name), *script_args]
+    display = ["python3", script_name, *script_args]
+    return actual, display
+
+
+def run_command(command_builder: tuple[list[str], list[str]], args: dict[str, Any]) -> tuple[str, bool]:
+    actual, display = command_builder
     payload: dict[str, Any] = {
         "command": shlex.join(display),
         "cwd": str(ROOT),
@@ -264,6 +305,14 @@ def run_script(script_name: str, script_args: list[str], args: dict[str, Any]) -
     return json.dumps(payload, ensure_ascii=False, indent=2), proc.returncode != 0
 
 
+def run_script(script_name: str, script_args: list[str], args: dict[str, Any]) -> tuple[str, bool]:
+    return run_command(script_command(script_name, script_args), args)
+
+
+def run_root_script(script_name: str, script_args: list[str], args: dict[str, Any]) -> tuple[str, bool]:
+    return run_command(root_script_command(script_name, script_args), args)
+
+
 def config_status(args: dict[str, Any]) -> tuple[str, bool]:
     command: list[str] = []
     add_value(command, args, "config", "--config")
@@ -282,11 +331,56 @@ def set_current_run_id(args: dict[str, Any]) -> tuple[str, bool]:
 def start_benchmark(args: dict[str, Any]) -> tuple[str, bool]:
     command: list[str] = []
     add_value(command, args, "config", "--config")
+    add_value(command, args, "save_dir", "--save-dir")
     add_value(command, args, "run_id", "--run-id")
     add_bool(command, args, "force_new", "--force-new")
     add_bool(command, args, "enter_next", "--enter-next")
     add_bool(command, args, "dry_run", "--dry-run")
-    return run_script("baba_benchmark.py", command, args)
+    add_bool(command, args, "skip_primer", "--skip-primer")
+    add_bool(command, args, "no_inspect", "--no-inspect")
+    add_value(command, args, "state_limit", "--state-limit")
+    add_value(command, args, "after_restart_wait", "--after-restart-wait")
+    return run_root_script("start_benchmark.py", command, args)
+
+
+def unpack_script_result(text: str) -> dict[str, Any]:
+    return json.loads(text)
+
+
+def aggregate_results(steps: list[dict[str, Any]]) -> tuple[str, bool]:
+    payload = {
+        "steps": steps,
+        "ok": all(not step.get("is_error") for step in steps),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2), not payload["ok"]
+
+
+def append_step(steps: list[dict[str, Any]], name: str, result: tuple[str, bool]) -> bool:
+    text, is_error = result
+    step = unpack_script_result(text)
+    step["name"] = name
+    step["is_error"] = is_error
+    steps.append(step)
+    return is_error
+
+
+def inspect_state(args: dict[str, Any]) -> tuple[str, bool]:
+    steps: list[dict[str, Any]] = []
+
+    if append_step(steps, "config_status", config_status(args)):
+        return aggregate_results(steps)
+
+    state_args = dict(args)
+    if "state_path" in state_args:
+        state_args["path"] = state_args.pop("state_path")
+    if "state_limit" in state_args:
+        state_args["limit"] = state_args.pop("state_limit")
+    append_step(steps, "read_state", read_state(state_args))
+
+    rules_args = dict(args)
+    rules_args.setdefault("rules_only", True)
+    append_step(steps, "parse_rules", parse_rules(rules_args))
+    return aggregate_results(steps)
 
 
 def read_state(args: dict[str, Any]) -> tuple[str, bool]:
@@ -343,6 +437,40 @@ def restart_level(args: dict[str, Any]) -> tuple[str, bool]:
     return run_script("baba_restart.py", command, args)
 
 
+def navigate_next(args: dict[str, Any]) -> tuple[str, bool]:
+    steps: list[dict[str, Any]] = []
+
+    route_args = dict(args)
+    execute = not as_bool(args, "dry_run")
+    route_args["execute"] = execute
+    if execute:
+        route_args.setdefault("no_rules_summary", True)
+    if append_step(steps, "map_route", map_route(route_args)) or as_bool(args, "dry_run"):
+        return aggregate_results(steps)
+
+    state_args: dict[str, Any] = {
+        "command_timeout_seconds": args.get("command_timeout_seconds", 30),
+        "wait": True,
+        "timeout": args.get("state_wait_timeout", 3),
+    }
+    for key in ("config", "save_dir"):
+        if key in args:
+            state_args[key] = args[key]
+    if "state_limit" in args:
+        state_args["limit"] = args["state_limit"]
+    append_step(steps, "read_state", read_state(state_args))
+
+    rules_args: dict[str, Any] = {
+        "command_timeout_seconds": args.get("command_timeout_seconds", 30),
+        "rules_only": True,
+    }
+    for key in ("config", "game_root", "save_dir"):
+        if key in args:
+            rules_args[key] = args[key]
+    append_step(steps, "parse_rules", parse_rules(rules_args))
+    return aggregate_results(steps)
+
+
 def map_route(args: dict[str, Any]) -> tuple[str, bool]:
     command: list[str] = []
     target = args.get("target")
@@ -392,10 +520,12 @@ TOOL_HANDLERS = {
     "config_status": config_status,
     "set_current_run_id": set_current_run_id,
     "start_benchmark": start_benchmark,
+    "inspect_state": inspect_state,
     "read_state": read_state,
     "parse_rules": parse_rules,
     "try_moves": try_moves,
     "restart_level": restart_level,
+    "navigate_next": navigate_next,
     "map_route": map_route,
     "play_known_route": play_known_route,
     "record_pass": record_pass,
