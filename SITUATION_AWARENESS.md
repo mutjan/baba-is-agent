@@ -34,6 +34,8 @@ python3 scripts/baba_map_route.py
 - `README.md`: installation, configuration, MCP setup, and tool reference.
 - `start_benchmark.py`: root first-run handoff entry for newly assigned agents.
 - `scripts/baba_mcp_server.py`: thin MCP stdio wrapper over the core scripts.
+- `scripts/baba_app_status.py`: read-only app/process/status check. Use it
+  instead of checking only for a `Baba Is You` process name.
 - `scripts/baba_next_action.py`: read-only next-action classifier for weak or
   newly assigned agents.
 - `scripts/baba_config.py`: local config creator/status refresher. It updates
@@ -54,6 +56,9 @@ python3 scripts/baba_map_route.py
 
 ## Critical Evidence Notes
 
+- `Baba Is You` is the app/bundle name; the actual macOS process commonly
+  appears as `Chowdren`. A raw `processes contains "Baba Is You"` check can be
+  false even while the game is running.
 - `frontmost=Chowdren` only proves the game process is focused; it does not
   prove movement or success.
 - A level is complete only when its save field becomes `3`.
@@ -63,6 +68,9 @@ python3 scripts/baba_map_route.py
 - Text blocks are pushable by default because `TEXT IS PUSH` is a base rule.
 - If `scripts/read_baba_state.py` has fresh output, prefer it over static
   `.l/.ld` parsing for turn-by-turn object and text positions.
+- On the big map after `0level`, do not chase the visible but unreachable lake
+  map node at `(16,10)`; use `navigate_next`/`map_route`, which should target
+  `1level` at `(11,14)` while only the short path from `(10,16)` is open.
 - If Lua exporter work causes startup errors, run
   `python3 scripts/install_baba_state_exporter.py --uninstall` and restart Baba
   before doing more experiments.

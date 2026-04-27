@@ -30,6 +30,11 @@ read `AGENTS.md` after installation.
   Codex or Terminal.
 - Baba Is You should be running before sending keys.
 
+On macOS, the app/bundle name is usually `Baba Is You`, but the live process can
+appear as the engine name `Chowdren`. Do not use `processes contains "Baba Is
+You"` as the only running check; use `scripts/baba_app_status.py` or MCP
+`app_status`.
+
 The first key-send may also trigger macOS prompts for Automation or
 Accessibility. Grant access to the process that runs the scripts.
 
@@ -64,6 +69,7 @@ python3 scripts/install_baba_state_exporter.py
 Restart Baba Is You after installing, then verify state reads:
 
 ```bash
+python3 scripts/baba_app_status.py
 python3 scripts/read_baba_state.py
 python3 scripts/parse_baba_level.py --rules-only
 ```
@@ -136,6 +142,7 @@ python3 scripts/baba_mcp_server.py --list-tools
 
 Current tools:
 
+- `app_status`
 - `config_status`
 - `set_current_run_id`
 - `start_benchmark`
@@ -179,6 +186,8 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 - `scripts/install_baba_state_exporter.py`: installs or removes the Lua exporter.
 - `scripts/read_baba_state.py`: prints the latest exported runtime state from
   the save group, with legacy JSON fallback.
+- `scripts/baba_app_status.py`: checks configured app name, the actual macOS
+  process name, frontmost process, and save-state readability.
 - `scripts/parse_baba_level.py`: reads save state, `.ld`, `.l`, and `values.lua`,
   then prints rules, text map, object positions, and raw directions.
 - `scripts/baba_try.py`: sends a short move segment, waits for state refreshes,
@@ -206,6 +215,8 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 
 - Split agent-facing instructions into `AGENTS.md`, leaving `README.md` focused
   on installation, configuration, MCP setup, and tool reference.
+- Added `scripts/baba_app_status.py` and MCP `app_status` so agents recognize
+  the normal macOS `Baba Is You` app-name versus `Chowdren` process-name split.
 - Added root `start_benchmark.py` as the first-run agent handoff entry. It now
   checks local readiness, prints the rules primer, and refuses to start a level
   benchmark when the current state is a map/sub-map.
@@ -218,6 +229,12 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   `esc,down,enter` return-to-parent-map menu flow.
 - Added `scripts/baba_next_action.py` and MCP `suggest_next_action` so weaker
   agents can ask for the safest next action before acting.
+- Hardened map navigation after `0level`: the default route now skips
+  unreachable visible map nodes, prefers reachable unlocked levels such as
+  `1level` at `(11,14)`, and accepts `--dry-run` as an explicit no-op.
+- Added an efficiency protocol to `AGENTS.md` and `start_benchmark.py` so
+  verbose agents stop exhaustive mental simulation and use short observable
+  action segments instead.
 - Updated run templates so level notes and learned rules use step-score
   language, and the growth diary template avoids treating wall-clock time as
   the score.

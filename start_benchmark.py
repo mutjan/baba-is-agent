@@ -40,8 +40,23 @@ Basic Baba Is You rules for benchmark agents
 - On the world map/overworld, do not look for Baba. The controllable object is
   the live-state cursor under the base rule cursor is select; use map_route or
   navigate_next to enter a real level.
+- On macOS, the app is configured as Baba Is You, but the live process may be
+  Chowdren. Use app_status rather than checking only for a Baba Is You process.
 - Passing evidence is the save completion status becoming 3, not a command exit
   code and not frontmost=Chowdren.
+
+Efficiency protocol
+
+- First principles means shortest verifiable feedback loop, not exhaustive
+  proof. Do not mentally simulate a whole solution before acting.
+- Each solving loop should be: observe 1-3 facts, state one hypothesis, run one
+  short try_moves segment, read the delta, then continue/shorten/restart.
+- Keep normal level action segments to 1-8 moves unless the state change is
+  completely predictable.
+- If you start writing "this is complicated" or keep reconsidering the same
+  branch, stop thinking and run a smaller observable test.
+- Do not enumerate every possible text alignment or map route. Use tool output
+  as the authority, then test the cheapest meaningful action.
 """
 
 
@@ -169,17 +184,20 @@ def inspect_commands(args: argparse.Namespace) -> list[list[str]]:
 def print_next_steps() -> None:
     print_section("Next agent loop")
     print("Prefer MCP tools when available:")
-    print("1. suggest_next_action if you are unsure")
-    print("2. inspect_state")
-    print("3. try_moves with the shortest meaningful move segment")
-    print("4. restart_level if an experiment goes bad")
-    print("5. return_to_map when you need to leave a level or sub-map")
-    print("6. navigate_next when on the world map/overworld")
-    print("7. record_pass only after completion status is 3")
+    print("1. app_status to confirm the process/status-file situation")
+    print("2. suggest_next_action if you are unsure")
+    print("3. inspect_state")
+    print("4. try_moves with the shortest meaningful move segment")
+    print("5. restart_level if an experiment goes bad")
+    print("6. return_to_map when you need to leave a level or sub-map")
+    print("7. navigate_next when on the world map/overworld")
+    print("8. record_pass only after completion status is 3")
     print()
     print("Script fallback:")
     print("python3 scripts/baba_try.py '<short move segment>'")
     print("python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
+    print()
+    print("Efficiency rule: explain one hypothesis, execute one short observable segment, then let the delta decide.")
     print()
     print("For the full agent operating contract, read AGENTS.md.")
 

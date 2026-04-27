@@ -77,33 +77,40 @@ def save_map_coords(save_section: dict[str, str], map_level: str) -> dict[tuple[
     return coords
 
 
-def default_target(
+def default_target_candidates(
     statuses: dict[str, int],
     map_level: str,
     level_items: list[dict[str, str]],
     excluded_level_ids: set[str],
-) -> str | None:
-    map_candidates: list[tuple[int, str]] = []
+) -> list[str]:
+    candidates: list[tuple[int, int, tuple[int, str], str]] = []
+
+    def add(priority: int, number: int, file_id: str) -> None:
+        candidates.append((priority, number, natural_level_key(file_id), file_id))
+
     for item in level_items:
         file_id = item.get("file", "")
-        if (
-            file_id
-            and file_id not in excluded_level_ids
-            and file_id != map_level
-            and statuses.get(file_id) != 3
-            and parse_int(item.get("state")) > 0
-            and parse_int(item.get("style")) != 2
-        ):
-            map_candidates.append((parse_int(item.get("number"), 10_000), file_id))
-    if map_candidates:
-        return sorted(map_candidates, key=lambda item: (item[0], natural_level_key(item[1])))[0][1]
+        if not file_id or file_id in excluded_level_ids or file_id == map_level:
+            continue
+        if statuses.get(file_id) == 3 or parse_int(item.get("style")) == 2:
+            continue
+        number = parse_int(item.get("number"), 10_000)
+        if statuses.get(file_id) == 2:
+            add(0, number, file_id)
+        elif parse_int(item.get("state")) > 0:
+            add(1, number, file_id)
 
-    candidates = [
-        level
-        for level, status in statuses.items()
-        if level not in excluded_level_ids and level != map_level and status == 2
-    ]
-    return sorted(candidates, key=natural_level_key)[0] if candidates else None
+    for level, status in statuses.items():
+        if level not in excluded_level_ids and level != map_level and status == 2:
+            add(2, 10_000, level)
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for *_sort_key, file_id in sorted(candidates):
+        if file_id not in seen:
+            seen.add(file_id)
+            ordered.append(file_id)
+    return ordered
 
 
 def natural_level_key(level: str) -> tuple[int, str]:
@@ -164,6 +171,9 @@ def infer_cursor(
     preferred_coords: set[tuple[int, int]] | None = None,
 ) -> tuple[tuple[int, int], str]:
     if not surrounds:
+        preferred = sorted(preferred_coords or set())
+        if len(preferred) == 1:
+            return preferred[0], "previous"
         return selector, "selector"
 
     def kind(coord: tuple[int, int]) -> str:
@@ -194,6 +204,9 @@ def infer_cursor(
         return preferred_matches[0], f"previous among {len(matches)} levelsurrounds matches"
     if selector in matches:
         return selector, f"selector among {len(matches)} levelsurrounds matches"
+    preferred = sorted(preferred_coords or set())
+    if len(preferred) == 1:
+        return preferred[0], f"previous fallback; {len(matches)} levelsurrounds matches"
     return selector, f"selector fallback; {len(matches)} levelsurrounds matches"
 
 
@@ -223,6 +236,11 @@ def main() -> int:
     parser.add_argument("--game-root", type=Path, help="Override configured Worlds directory")
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
     parser.add_argument("--enter-key", choices=["enter", "confirm"], default="enter")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan only. This is the default; kept for agents that expect a dry-run flag.",
+    )
     parser.add_argument("--execute", action="store_true", help="Send the detected route with baba_send_keys.py")
     parser.add_argument("--hold-ms", type=int, default=90, help="Key hold passed to baba_send_keys.py with --execute")
     parser.add_argument(
@@ -257,12 +275,9 @@ def main() -> int:
     prize_total = parse_int(save.get(f"{world}_prize", {}).get("total"))
     levels = numbered_items(sections.get("levels", {}))
     paths = numbered_items(sections.get("paths", {}))
-    target = args.target or default_target(statuses, map_level, list(levels.values()), excluded_level_ids)
-    if not target:
-        raise SystemExit("Could not infer target. Pass a level id such as 1level.")
-
+    requested_target = args.target
     level_by_coord: dict[tuple[int, int], list[dict[str, str]]] = collections.defaultdict(list)
-    target_coords: set[tuple[int, int]] = set()
+    coords_by_file: dict[str, set[tuple[int, int]]] = collections.defaultdict(set)
     previous_coords: set[tuple[int, int]] = set()
     for index, item in levels.items():
         if level_count and index >= level_count:
@@ -270,10 +285,11 @@ def main() -> int:
         coord = coord_from_item(item)
         if not coord:
             continue
+        file_id = item.get("file", "")
         level_by_coord[coord].append(item)
-        if item.get("file") == target:
-            target_coords.add(coord)
-        if item.get("file") == previous:
+        if file_id:
+            coords_by_file[file_id].add(coord)
+        if file_id == previous:
             previous_coords.add(coord)
 
     save_path_coords = {
@@ -298,7 +314,7 @@ def main() -> int:
     for coord, items in level_by_coord.items():
         for item in items:
             file_id = item.get("file", "")
-            if file_id == target or statuses.get(file_id, 0) > 0 or parse_int(item.get("state")) > 0:
+            if file_id == requested_target or statuses.get(file_id, 0) > 0 or parse_int(item.get("state")) > 0:
                 visible_level_coords.add(coord)
                 passable.add(coord)
                 break
@@ -319,7 +335,31 @@ def main() -> int:
             previous_coords,
         )
 
-    path = shortest_path(cursor, target_coords, passable)
+    target = requested_target
+    target_coords: set[tuple[int, int]] = set()
+    path: list[str] | None = None
+    skipped_targets: list[str] = []
+    if target:
+        target_coords = coords_by_file.get(target, set())
+        if not target_coords:
+            raise SystemExit(f"Could not find map coordinates for {target}.")
+        path = shortest_path(cursor, target_coords, passable)
+    else:
+        candidates = default_target_candidates(statuses, map_level, list(levels.values()), excluded_level_ids)
+        for candidate in candidates:
+            coords = coords_by_file.get(candidate, set())
+            candidate_path = shortest_path(cursor, coords, passable) if coords else None
+            if candidate_path is None:
+                skipped_targets.append(candidate)
+                continue
+            target = candidate
+            target_coords = coords
+            path = candidate_path
+            break
+        if not target:
+            suffix = f" Skipped unreachable candidates: {', '.join(skipped_targets)}." if skipped_targets else ""
+            raise SystemExit(f"Could not infer a reachable target. Pass a level id such as 1level.{suffix}")
+
     if path is None:
         raise SystemExit(f"No route from {cursor} to {target} at {sorted(target_coords)}")
 
@@ -329,6 +369,8 @@ def main() -> int:
         print(f"leveltree={leveltree}")
     print(f"cursor={cursor} source={cursor_source}")
     print(f"target={target} coords={sorted(target_coords)}")
+    if skipped_targets:
+        print("skipped_unreachable=" + ",".join(skipped_targets))
     print("moves=" + ",".join(moves))
     print(f"command=python3 scripts/baba_send_keys.py '{','.join(moves)}' --hold-ms {args.hold_ms}")
 

@@ -64,6 +64,21 @@ COMMON_CONFIG = {
 
 
 TOOLS: dict[str, dict[str, Any]] = {
+    "app_status": tool_schema(
+        description=(
+            "Check whether Baba appears to be running/readable. Handles the macOS "
+            "Baba app name vs Chowdren engine process name distinction."
+        ),
+        properties={
+            **COMMON_CONFIG,
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "raw_json": {"type": "boolean", "description": "Return JSON instead of key=value lines."},
+            "require_running": {
+                "type": "boolean",
+                "description": "Return an error if no known Baba process is detected.",
+            },
+        },
+    ),
     "config_status": tool_schema(
         description="Inspect local config, game file detection, exporter status, current_run_id, and input_delay.",
         properties={**COMMON_CONFIG},
@@ -206,6 +221,10 @@ TOOLS: dict[str, dict[str, Any]] = {
             "game_root": {"type": "string", "description": "Optional Worlds directory override."},
             "save_dir": {"type": "string", "description": "Optional save directory override."},
             "enter_key": {"type": "string", "enum": ["enter", "confirm"]},
+            "dry_run": {
+                "type": "boolean",
+                "description": "Plan the route without executing it. This is also the script default.",
+            },
             "execute": {"type": "boolean", "description": "Send the detected route."},
             "hold_ms": {"type": "integer", "description": "Key hold passed to baba_send_keys.py with execute=true."},
             "no_rules_summary": {
@@ -330,6 +349,15 @@ def run_script(script_name: str, script_args: list[str], args: dict[str, Any]) -
 
 def run_root_script(script_name: str, script_args: list[str], args: dict[str, Any]) -> tuple[str, bool]:
     return run_command(root_script_command(script_name, script_args), args)
+
+
+def app_status(args: dict[str, Any]) -> tuple[str, bool]:
+    command: list[str] = []
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "save_dir", "--save-dir")
+    add_bool(command, args, "raw_json", "--json")
+    add_bool(command, args, "require_running", "--require-running")
+    return run_script("baba_app_status.py", command, args)
 
 
 def config_status(args: dict[str, Any]) -> tuple[str, bool]:
@@ -518,6 +546,7 @@ def map_route(args: dict[str, Any]) -> tuple[str, bool]:
     add_value(command, args, "game_root", "--game-root")
     add_value(command, args, "save_dir", "--save-dir")
     add_value(command, args, "enter_key", "--enter-key")
+    add_bool(command, args, "dry_run", "--dry-run")
     add_bool(command, args, "execute", "--execute")
     add_value(command, args, "hold_ms", "--hold-ms")
     add_bool(command, args, "no_rules_summary", "--no-rules-summary")
@@ -555,6 +584,7 @@ def record_pass(args: dict[str, Any]) -> tuple[str, bool]:
 
 
 TOOL_HANDLERS = {
+    "app_status": app_status,
     "config_status": config_status,
     "set_current_run_id": set_current_run_id,
     "start_benchmark": start_benchmark,

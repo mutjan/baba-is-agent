@@ -18,6 +18,7 @@
 - 如果目标清晰但当前路径不是最简单、低风险、可验证的方案，直接指出更好的替代方案。
 - 需要决策时按 MECE 原则覆盖主要可能性。
 - 默认简洁输出：结论、关键理由、改动点、验证结果。
+- 第一性原理在本项目里等于寻找最短可验证反馈回路，不等于穷举所有路线或长篇证明。
 
 ## 首选入口
 
@@ -39,23 +40,33 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 
 MCP 工具可用时，默认按这个顺序工作：
 
-1. `suggest_next_action`，不确定下一步时先调用它
-2. `inspect_state`
-3. `set_current_run_id`，仅当当前 run id 不对或为空
-4. `start_benchmark`
-5. `try_moves`，用最短的有意义行动段测试假设
-6. `restart_level`，当实验把局面弄坏或需要回到干净检查点
-7. `return_to_map`，当需要从关卡或下级地图回到上级地图
-8. `navigate_next`，当当前状态是世界地图或 overworld
-9. `record_pass`，仅当完成态已经是 `3`
+1. `app_status`，确认游戏进程和状态文件是否可读
+2. `suggest_next_action`，不确定下一步时先调用它
+3. `inspect_state`
+4. `set_current_run_id`，仅当当前 run id 不对或为空
+5. `start_benchmark`
+6. `try_moves`，用最短的有意义行动段测试假设
+7. `restart_level`，当实验把局面弄坏或需要回到干净检查点
+8. `return_to_map`，当需要从关卡或下级地图回到上级地图
+9. `navigate_next`，当当前状态是世界地图或 overworld
+10. `record_pass`，仅当完成态已经是 `3`
 
 只在 MCP 不可用或正在调试 MCP wrapper 时回退到 `python3 scripts/...`，并说明原因。
+
+## 游戏进程识别
+
+- macOS 上配置里的 app/bundle 名通常是 `Baba Is You`，但实际前台进程可能是引擎名 `Chowdren`。
+- 不要把 `System Events` 里的 `processes contains "Baba Is You"` 当作唯一运行判断；它可能是假阴性。
+- 用 MCP `app_status` 或脚本 `python3 scripts/baba_app_status.py` 判断。`running_process_detected=True` 且 `running_process_name=Chowdren` 是正常状态。
+- `frontmost_process=Chowdren` 只能说明窗口聚焦；能否读状态、能否移动，还要看 `save_state_available`、`inspect_state` 和后续 `try_moves` 结果。
 
 ## 地图与普通关卡的区分
 
 - 如果当前关卡是世界地图或 overworld，例如 `106level`、`177level`，不要按普通 Baba 关卡求解。
 - 地图上没有 Baba 对象不是错误。地图的可控对象是 live-state 里的 `cursor`，控制模型是 `cursor is select`。
 - 地图状态下使用 `navigate_next` 或 `map_route` 进入未完成关卡；进入后再读取普通关卡规则，再开始本关 benchmark。
+- 不要自己从所有可见 `level` 单元里猜目标。地图上会显示很多当前不可达的关卡；以 `suggest_next_action` 的 `route_target` / `route_moves` 或 `map_route` 输出为准。
+- 大地图通过 `0level` 后，典型下一关是 `1level`，坐标 `(11,14)`；从 `0level` 坐标 `(10,16)` 的路线是 `right,up,up,enter`。
 - 在关卡内或下级地图内需要返回上级地图时，用 `return_to_map`。底层按键是 `esc,down,enter`。
 
 不要在地图或下级地图上开始关卡 benchmark。`start_benchmark` 如果检测到当前是地图，会提示先 `navigate_next`，避免把地图当普通关卡计分。
@@ -78,6 +89,24 @@ MCP 工具可用时，默认按这个顺序工作：
 - 每次 `try_moves` 后读 delta：规则新增/消失、目标对象移动、对象消失、完成态变化。
 - 如果分支错了，用 `restart_level` 回到干净状态，再缩短或修正假设。
 - 只有当问题主要是移动少量文字、目标规则明确、且搜索模型覆盖这些机制时，才使用重搜索。
+
+## 解题效率协议
+
+有些模型会把 `第一性原理` 和 `MECE` 理解成“先在脑内证明完整解法”。本项目不要这样做。除非用户明确要求讲解推理过程，否则每轮解题只输出并执行一个短反馈循环：
+
+```text
+观察：当前最关键的 1-3 个事实。
+假设：这段短动作预期会改变什么。
+动作：try_moves/map_route/restart_level 的一个命令，普通关卡动作段优先控制在 1-8 步。
+结果：只读 delta，决定继续、缩短、撤回或重启。
+```
+
+- 不要在执行前手工推演超过 8 步；超过就拆成两个可验证动作段。
+- 不要枚举所有可能规则排列、所有坐标路线、所有 “maybe” 分支。按 MECE 分清主要类型后，选择最便宜、最可观测的一类先试。
+- 如果连续两段动作没有带来规则变化、关键对象移动、位置改善或完成态变化，停止脑内补救，先 `restart_level` 或回到上一个干净检查点。
+- 如果一句话里第二次出现 “let me think / 让我再想 / 这很复杂 / getting complicated”，立刻把问题改写成一个更短的可验证动作，而不是继续推演。
+- 读完 `baba_try.py` 的 delta 后，以 delta 为事实来源，不再复述完整坐标模拟；下一轮只解释和 delta 直接相关的差异。
+- 可以记录学到的通用机制，但不要把记录文件写成完整内心独白或关卡解法剧透。
 
 ## 记录要求
 

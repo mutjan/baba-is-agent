@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,35 @@ def active_attempt(run_id: str) -> Path | None:
         return None
     path = RUNS_ROOT / run_id / "baba_benchmark_active.json"
     return path if path.exists() else None
+
+
+def route_hint(config_path: Path | None, save_dir: Path | None) -> dict[str, str]:
+    command = [sys.executable, str(ROOT / "scripts" / "baba_map_route.py"), "--dry-run"]
+    if config_path:
+        command.extend(["--config", str(config_path)])
+    if save_dir:
+        command.extend(["--save-dir", str(save_dir)])
+    proc = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    hint: dict[str, str] = {
+        "route_command": "python3 scripts/baba_map_route.py --execute",
+    }
+    if proc.returncode != 0:
+        hint["route_error"] = (proc.stderr or proc.stdout).strip()
+        return hint
+    for line in proc.stdout.splitlines():
+        if line.startswith("target="):
+            hint["route_target"] = line.removeprefix("target=").strip()
+        elif line.startswith("moves="):
+            hint["route_moves"] = line.removeprefix("moves=").strip()
+        elif line.startswith("skipped_unreachable="):
+            hint["route_skipped_unreachable"] = line.removeprefix("skipped_unreachable=").strip()
+    return hint
 
 
 def visible_unit_names(state: dict[str, Any]) -> set[str]:
@@ -91,6 +122,7 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
                 "reason": "Current state is a map/sub-map controlled by cursor is select; do not solve or score it as a normal level.",
             }
         )
+        payload.update(route_hint(config_path, save_dir))
     elif status == 3:
         payload.update(
             {
@@ -137,6 +169,11 @@ def print_payload(payload: dict[str, Any]) -> None:
         "active_attempt",
         "next_mcp_tool",
         "next_script",
+        "route_command",
+        "route_target",
+        "route_moves",
+        "route_skipped_unreachable",
+        "route_error",
         "reason",
     ):
         print(f"{key}={payload.get(key) or ''}")
