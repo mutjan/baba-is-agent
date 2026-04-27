@@ -84,6 +84,7 @@ MCP 工具可用时，默认按这个顺序工作：
 - `PUSH` 的含义是：`YOU` 对象朝某方向移动时，可以把对应物体或文字向前推一格，前提是整条被推动链背后有空位。
 - 如果推动链背后是 `STOP`、地图边界或不可推动阻挡物，推动不会发生。
 - 推动文字可以创建或打断规则；移动 `IS`、`YOU`、`WIN`、`STOP`、`PUSH`、`OPEN`、`SHUT` 或名词文字通常是解题核心。
+- 围绕 `X IS DEFEAT` 的对象要生成方向级禁止移动表，而不只是把对象格当成普通阻挡。形式是 `(from_cell, move)`：如果 `YOU` 从某格朝某方向会进入 `DEFEAT` 对象所在格，就禁止这条边。推文字时同理，因为成功推动后 `YOU` 会进入被推文字原来的格子；如果该原格叠着 `DEFEAT` 对象，这个方向的推动也必须排除。
 - 死角和单格口袋是通用风险：如果关键文字或物体被推到边界、`STOP`、`DEFEAT` 或只能从一侧接触的位置，之后可能无法从需要的方向再推动。不要写成本关坐标提示；只把它当成每次推动前要用状态验证的通用机制。
 
 ## 交互式解题循环
@@ -95,6 +96,51 @@ MCP 工具可用时，默认按这个顺序工作：
 - 只在需要看完整原始 delta 时使用 `try_moves`：规则新增/消失、目标对象移动、对象消失、完成态变化。
 - 如果分支错了，用 `restart_level` 回到干净状态，再缩短或修正假设。
 - 只有当问题主要是移动少量文字、目标规则明确、且搜索模型覆盖这些机制时，才使用重搜索。
+
+## 假设生成脚本
+
+当读完当前状态但还不知道下一步该试什么时，先运行：
+
+```bash
+python3 scripts/baba_suggest_hypotheses.py --top 8
+```
+
+这个脚本不是求解器，也不负责证明路线。它只做第一层功能筛选：从当前 live state 里识别 `YOU`、`PUSH`、`OPEN`、`STOP`、`DEFEAT` 等信号，按少数高价值模板生成候选假设，例如：
+
+- `阻挡物 IS SHUT` + `可移动工具 IS OPEN`
+- `当前可控对象 IS WIN`
+- `某个对象 IS YOU`
+- 打断可见的 `X IS STOP`
+
+脚本输出的 `search_next` 只能作为候选路线生成入口，不能直接当事实。每个候选仍必须进入短反馈循环，用 `check_moves` / `scripts/baba_action_check.py` 验证真实 delta。
+
+典型用法：
+
+```bash
+python3 scripts/baba_suggest_hypotheses.py --top 5
+python3 scripts/baba_suggest_hypotheses.py --json --top 5
+```
+
+如果脚本给出的第一候选是类似 `wall is shut + star is open`，下一步不是穷举所有文字排列，而是分别验证这些目标规则是否能被短路线构造；构造成功后再验证实体交互是否真的打开通路。
+
+当 `阻挡物 IS SHUT` + `可推动工具 IS OPEN` 已经成立，或已经被列为最高候选时，先用真挡路墙排序器筛掉“不挡路墙”：
+
+```bash
+python3 scripts/baba_rank_breakout_targets.py --subject wall --top 8
+python3 scripts/baba_rank_breakout_targets.py --subject wall --top 3 --json
+python3 scripts/baba_rank_breakout_targets.py --subject wall --top 8 --setup-search --setup-candidates 8
+```
+
+这个脚本从 live state 计算：
+
+- `DEFEAT` 周围的方向级禁止移动边，例如 `(12,11)->up`。
+- 假设删除每个候选 `STOP` 对象后，`YOU` 可达区域新增多少格。
+- 这个对象是否是真门槛：删除前哪一侧可达，删除后哪一侧变成新区域。
+- `OPEN+PUSH` 工具的撞击槽位：工具目标格、Baba 站位、推动方向。
+
+`--setup-search` 会在初筛结果上继续做小型推物搜索，尝试把 `OPEN+PUSH` 工具和必要的 `SHUT` 文字推到“撞墙前一刻”的局面，并输出 `setup_route`。这是慢一点但更可靠的二筛；不要默认全图穷举，优先限制 `--setup-candidates`。
+
+排序结果只能决定“优先撞哪一格墙/门”，不能替代真实验证。选中候选后仍要用 `check_moves` / `scripts/baba_action_check.py` 验证工具和阻挡物是否真的一起消失，再读状态确认可达区域或完成态变化。
 
 ## 解题效率协议
 

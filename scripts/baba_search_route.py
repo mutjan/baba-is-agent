@@ -23,8 +23,10 @@ import sys
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from baba_config import load_config
+from baba_step import state_path
 from parse_baba_level import (
     active_rules,
     collect_positions,
@@ -34,6 +36,7 @@ from parse_baba_level import (
     parse_level_binary,
     read_ini_like,
 )
+from read_baba_state import load_state
 
 
 ROOT = Path(__file__).resolve().parent
@@ -69,12 +72,14 @@ class LevelData:
 @dataclass(frozen=True)
 class SearchConfig:
     goal_subject: str
-    goal_property: str
+    goal_property: str | None
     preserve_you: bool
     touch_win: bool
     max_states: int
     heuristic_weight: int
     pattern_margin: int
+    target_start: Coord | None
+    target_dir: str
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,7 @@ class SearchProblem:
 
 
 State = tuple[tuple[int, int], tuple[tuple[int, int], ...]]
+ForbiddenMove = tuple[Coord, str]
 
 
 @dataclass(frozen=True)
@@ -141,6 +147,58 @@ def load_level(
     positions = collect_positions(width, height, layers, code_to_name)
     rules = active_rules(width, height, layers, code_to_name)
     return LevelData(world, level, name, width, height, positions, rules)
+
+
+def rules_from_text_positions(positions: dict[str, list[tuple[int, int, int]]]) -> list[tuple[str, Coord, str, str, str]]:
+    words_by_coord: dict[Coord, list[str]] = defaultdict(list)
+    for name, coords in positions.items():
+        if not name.startswith("text_"):
+            continue
+        word = name.removeprefix("text_")
+        for x, y, _layer in coords:
+            words_by_coord[(x, y)].append(word)
+
+    rules: list[tuple[str, Coord, str, str, str]] = []
+    seen: set[tuple[str, Coord, str, str, str]] = set()
+    for coord, first_words in words_by_coord.items():
+        x, y = coord
+        for direction, (dx, dy) in (("H", (1, 0)), ("V", (0, 1))):
+            middle_coord = (x + dx, y + dy)
+            last_coord = (x + 2 * dx, y + 2 * dy)
+            if "is" not in words_by_coord.get(middle_coord, []):
+                continue
+            for first in first_words:
+                for last in words_by_coord.get(last_coord, []):
+                    rule = (direction, coord, first, "is", last)
+                    if rule not in seen:
+                        seen.add(rule)
+                        rules.append(rule)
+    return rules
+
+
+def load_live_level(save_dir: Path, live_state_path: Path) -> LevelData:
+    state = load_state(live_state_path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
+    meta = state.get("meta", {})
+    positions: dict[str, list[tuple[int, int, int]]] = defaultdict(list)
+    for unit in state.get("units", []):
+        if unit.get("dead") or not unit.get("visible", True):
+            continue
+        name = unit.get("name")
+        x = unit.get("x")
+        y = unit.get("y")
+        if not name or x is None or y is None:
+            continue
+        positions[str(name)].append((int(x), int(y), int(unit.get("zlayer") or 0)))
+
+    return LevelData(
+        str(meta.get("world") or "<unknown>"),
+        str(meta.get("level") or "<unknown>"),
+        str(meta.get("level_name") or "<unknown>"),
+        int(meta.get("room_width") or 0),
+        int(meta.get("room_height") or 0),
+        dict(positions),
+        rules_from_text_positions(positions),
+    )
 
 
 def text_units(positions: dict[str, list[tuple[int, int, int]]]) -> tuple[TextUnit, ...]:
@@ -383,6 +441,49 @@ def all_rule_triples(
     return tuple(triples)
 
 
+def all_rule_prefixes(
+    width: int,
+    height: int,
+    *,
+    window: tuple[int, int, int, int] | None,
+) -> tuple[tuple[Coord, Coord], ...]:
+    if window is None:
+        min_x, max_x, min_y, max_y = 1, width - 2, 1, height - 2
+    else:
+        min_x, max_x, min_y, max_y = window
+
+    prefixes: list[tuple[Coord, Coord]] = []
+    for x in range(min_x, max_x + 1):
+        for y in range(min_y, max_y + 1):
+            for _name, (dx, dy) in (("right", (1, 0)), ("down", (0, 1))):
+                first = (x, y)
+                middle = (x + dx, y + dy)
+                if (
+                    1 <= middle[0] <= width - 2
+                    and 1 <= middle[1] <= height - 2
+                    and min_x <= middle[0] <= max_x
+                    and min_y <= middle[1] <= max_y
+                ):
+                    prefixes.append((first, middle))
+    return tuple(prefixes)
+
+
+def goal_shape_from_target(config: SearchConfig) -> tuple[Coord, ...] | None:
+    if config.target_start is None:
+        return None
+    if config.target_dir == "right":
+        dx, dy = (1, 0)
+    elif config.target_dir == "down":
+        dx, dy = (0, 1)
+    else:
+        raise SystemExit("--target-dir must be right or down")
+    x, y = config.target_start
+    middle = (x + dx, y + dy)
+    if config.goal_property is None:
+        return (config.target_start, middle)
+    return (config.target_start, middle, (x + 2 * dx, y + 2 * dy))
+
+
 def can_satisfy_pattern(
     pattern: dict[str, set[Coord]],
     selected: tuple[TextUnit, ...],
@@ -413,7 +514,9 @@ def build_target_patterns(
     fixed: tuple[TextUnit, ...],
     config: SearchConfig,
 ) -> tuple[Pattern, ...]:
-    relevant_words = {actor_name, "is", "you", config.goal_subject, config.goal_property}
+    relevant_words = {actor_name, "is", "you", config.goal_subject}
+    if config.goal_property is not None:
+        relevant_words.add(config.goal_property)
     relevant_coords = [unit.coord for unit in selected if unit.word in relevant_words]
     if relevant_coords:
         xs = [coord[0] for coord in relevant_coords]
@@ -428,17 +531,28 @@ def build_target_patterns(
         window = None
 
     triples = all_rule_triples(level.width, level.height, window=window)
+    configured_shape = goal_shape_from_target(config)
+    goal_shapes: tuple[tuple[Coord, ...], ...]
+    if configured_shape is not None:
+        goal_shapes = (configured_shape,)
+    elif config.goal_property is None:
+        goal_shapes = all_rule_prefixes(level.width, level.height, window=window)
+    else:
+        goal_shapes = triples
+
     patterns: list[Pattern] = []
     for you_first, you_is, you_last in triples:
-        for goal_first, goal_is, goal_last in triples:
+        for goal_shape in goal_shapes:
             pattern: dict[str, set[Coord]] = defaultdict(set)
             if config.preserve_you:
                 pattern[actor_name].add(you_first)
                 pattern["is"].add(you_is)
                 pattern["you"].add(you_last)
+            goal_first, goal_is = goal_shape[0], goal_shape[1]
             pattern[config.goal_subject].add(goal_first)
             pattern["is"].add(goal_is)
-            pattern[config.goal_property].add(goal_last)
+            if config.goal_property is not None:
+                pattern[config.goal_property].add(goal_shape[2])
             if can_satisfy_pattern(pattern, selected, fixed):
                 patterns.append(freeze_pattern(pattern))
     return tuple(patterns)
@@ -498,18 +612,26 @@ def build_problem(
     config: SearchConfig,
     *,
     extra_words: list[str],
+    selected_text_at: list[tuple[str, Coord]],
     all_is: bool,
 ) -> SearchProblem:
     units = text_units(level.positions)
     actor_name, you_units = current_you_rule(level, units)
 
     selected_labels = {unit.label for unit in you_units}
-    needed_words = {config.goal_subject, config.goal_property, *extra_words}
+    needed_words = {config.goal_subject, *extra_words}
+    if config.goal_property is not None:
+        needed_words.add(config.goal_property)
     if all_is:
         needed_words.add("is")
     for unit in units:
         if unit.word in needed_words:
             selected_labels.add(unit.label)
+    for word, coord in selected_text_at:
+        matches = [unit for unit in units if unit.word == word and unit.coord == coord]
+        if not matches:
+            raise SystemExit(f"No text_{word} found at {coord}")
+        selected_labels.update(unit.label for unit in matches)
 
     selected = tuple(unit for unit in units if unit.label in selected_labels)
     fixed = tuple(unit for unit in units if unit.label not in selected_labels)
@@ -539,38 +661,106 @@ def text_positions(problem: SearchProblem, boxes: tuple[tuple[int, int], ...]) -
     return positions
 
 
+def coord_words(problem: SearchProblem, boxes: tuple[tuple[int, int], ...]) -> dict[Coord, list[str]]:
+    words: dict[Coord, list[str]] = defaultdict(list)
+    for word, coord in text_positions(problem, boxes).values():
+        words[coord].append(word)
+    return words
+
+
 def active_text_rules(
     problem: SearchProblem, boxes: tuple[tuple[int, int], ...]
 ) -> list[tuple[tuple[int, int], str, str]]:
-    coord_words: dict[tuple[int, int], list[str]] = defaultdict(list)
-    for word, coord in text_positions(problem, boxes).values():
-        coord_words[coord].append(word)
+    words_by_coord = coord_words(problem, boxes)
 
     rules: list[tuple[tuple[int, int], str, str]] = []
-    for coord, first_words in coord_words.items():
+    for coord, first_words in words_by_coord.items():
         x, y = coord
         for _name, (dx, dy) in DIRS:
             middle_coord = (x + dx, y + dy)
             last_coord = (x + 2 * dx, y + 2 * dy)
-            if "is" not in coord_words.get(middle_coord, []):
+            if "is" not in words_by_coord.get(middle_coord, []):
                 continue
             for first in first_words:
-                for last in coord_words.get(last_coord, []):
+                for last in words_by_coord.get(last_coord, []):
                     rules.append((coord, first, last))
     return rules
+
+
+def active_text_prefixes(
+    problem: SearchProblem, boxes: tuple[tuple[int, int], ...]
+) -> list[tuple[tuple[int, int], str]]:
+    words_by_coord = coord_words(problem, boxes)
+
+    prefixes: list[tuple[tuple[int, int], str]] = []
+    for coord, first_words in words_by_coord.items():
+        x, y = coord
+        for _name, (dx, dy) in DIRS:
+            middle_coord = (x + dx, y + dy)
+            if "is" not in words_by_coord.get(middle_coord, []):
+                continue
+            for first in first_words:
+                prefixes.append((coord, first))
+    return prefixes
 
 
 def has_text_rule(problem: SearchProblem, boxes: tuple[tuple[int, int], ...], subject: str, prop: str) -> bool:
     return any(first == subject and last == prop for _coord, first, last in active_text_rules(problem, boxes))
 
 
+def has_text_prefix(problem: SearchProblem, boxes: tuple[tuple[int, int], ...], subject: str) -> bool:
+    return any(first == subject for _coord, first in active_text_prefixes(problem, boxes))
+
+
+def goal_satisfied(problem: SearchProblem, boxes: tuple[tuple[int, int], ...]) -> bool:
+    target_shape = goal_shape_from_target(problem.config)
+    if target_shape is not None:
+        words_by_coord = coord_words(problem, boxes)
+        if problem.config.goal_subject not in words_by_coord.get(target_shape[0], []):
+            return False
+        if "is" not in words_by_coord.get(target_shape[1], []):
+            return False
+        if problem.config.goal_property is None:
+            return True
+        return problem.config.goal_property in words_by_coord.get(target_shape[2], [])
+    if problem.config.goal_property is None:
+        return has_text_prefix(problem, boxes, problem.config.goal_subject)
+    return has_text_rule(problem, boxes, problem.config.goal_subject, problem.config.goal_property)
+
+
 def semantic_blockers(problem: SearchProblem, boxes: tuple[tuple[int, int], ...]) -> set[tuple[int, int]]:
-    stop_subjects = {first for _coord, first, last in active_text_rules(problem, boxes) if last == "stop"}
+    rules = active_text_rules(problem, boxes)
+    stop_subjects = {first for _coord, first, last in rules if last == "stop"}
     blockers: set[tuple[int, int]] = set()
     for subject in stop_subjects:
         blockers.update((x, y) for x, y, _layer in problem.level.positions.get(subject, []))
     blockers.update(unit.coord for unit in problem.fixed)
     return blockers
+
+
+def dangerous_actor_entry_tiles(problem: SearchProblem, boxes: tuple[tuple[int, int], ...]) -> set[tuple[int, int]]:
+    rules = active_text_rules(problem, boxes)
+    defeat_subjects = {first for _coord, first, last in rules if last == "defeat"}
+    hot_subjects = {first for _coord, first, last in rules if last == "hot"}
+    melt_subjects = {first for _coord, first, last in rules if last == "melt"}
+
+    blockers: set[tuple[int, int]] = set()
+    for subject in defeat_subjects:
+        blockers.update((x, y) for x, y, _layer in problem.level.positions.get(subject, []))
+    if problem.actor_name in melt_subjects:
+        for subject in hot_subjects:
+            blockers.update((x, y) for x, y, _layer in problem.level.positions.get(subject, []))
+    return blockers
+
+
+def forbidden_actor_moves(problem: SearchProblem, boxes: tuple[tuple[int, int], ...]) -> set[ForbiddenMove]:
+    forbidden: set[ForbiddenMove] = set()
+    for tile in dangerous_actor_entry_tiles(problem, boxes):
+        for move, (dx, dy) in DIRS:
+            stand = (tile[0] - dx, tile[1] - dy)
+            if in_bounds(problem, stand):
+                forbidden.add((stand, move))
+    return forbidden
 
 
 def in_bounds(problem: SearchProblem, coord: tuple[int, int]) -> bool:
@@ -600,13 +790,19 @@ def reachable(
     boxes: tuple[tuple[int, int], ...],
 ) -> dict[tuple[int, int], tuple[tuple[int, int] | None, str | None]]:
     occupied = set(boxes) | semantic_blockers(problem, boxes)
+    forbidden = forbidden_actor_moves(problem, boxes)
     queue = deque([actor])
     prev: dict[tuple[int, int], tuple[tuple[int, int] | None, str | None]] = {actor: (None, None)}
     while queue:
         coord = queue.popleft()
         for name, (dx, dy) in DIRS:
             nxt = (coord[0] + dx, coord[1] + dy)
-            if nxt in prev or not in_bounds(problem, nxt) or nxt in occupied:
+            if (
+                (coord, name) in forbidden
+                or nxt in prev
+                or not in_bounds(problem, nxt)
+                or nxt in occupied
+            ):
                 continue
             prev[nxt] = (coord, name)
             queue.append(nxt)
@@ -614,7 +810,7 @@ def reachable(
 
 
 def target_rule_heuristic(problem: SearchProblem, boxes: tuple[tuple[int, int], ...]) -> int:
-    goal_ok = has_text_rule(problem, boxes, problem.config.goal_subject, problem.config.goal_property)
+    goal_ok = goal_satisfied(problem, boxes)
     you_ok = (not problem.config.preserve_you) or has_text_rule(problem, boxes, problem.actor_name, "you")
     if goal_ok and you_ok:
         return 0
@@ -668,7 +864,7 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
         seen += 1
         actor, boxes = state
 
-        goal_ok = has_text_rule(problem, boxes, problem.config.goal_subject, problem.config.goal_property)
+        goal_ok = goal_satisfied(problem, boxes)
         you_ok = (not problem.config.preserve_you) or has_text_rule(problem, boxes, problem.actor_name, "you")
         if goal_ok and you_ok:
             final_walk = final_walk_to_goal(problem, actor, boxes)
@@ -686,6 +882,7 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
         prev = reachable(problem, actor, boxes)
         occupied = {coord: index for index, coord in enumerate(boxes)}
         blockers = semantic_blockers(problem, boxes)
+        forbidden = forbidden_actor_moves(problem, boxes)
         for index, pos in enumerate(boxes):
             for move, (dx, dy) in DIRS:
                 stand = (pos[0] - dx, pos[1] - dy)
@@ -698,6 +895,8 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
                     chain.append(occupied[cursor])
                     cursor = (cursor[0] + dx, cursor[1] + dy)
                 if not in_bounds(problem, cursor) or cursor in blockers:
+                    continue
+                if (stand, move) in forbidden:
                     continue
 
                 next_boxes = list(boxes)
@@ -739,13 +938,18 @@ def print_analysis(problem: SearchProblem) -> None:
     for line in rule_mobility_lines(problem.level):
         print(line)
     print(f"current_you={problem.actor_name} is you actor={problem.start_actor}")
-    print(f"goal={problem.config.goal_subject} is {problem.config.goal_property}")
+    if problem.config.goal_property is None:
+        print(f"goal_prefix={problem.config.goal_subject} is")
+    else:
+        print(f"goal={problem.config.goal_subject} is {problem.config.goal_property}")
     print("selected_text=" + ", ".join(f"{unit.label}:{unit.word}@{unit.coord}" for unit in problem.selected))
     print(f"fixed_text_count={len(problem.fixed)}")
     print(f"target_patterns={len(problem.target_patterns)}")
     print(f"target_assignments={len(problem.target_assignments)}")
     blockers = sorted(semantic_blockers(problem, problem.start_boxes))
     print("initial_blockers=" + ", ".join(str(coord) for coord in blockers))
+    forbidden = sorted(forbidden_actor_moves(problem, problem.start_boxes))
+    print("initial_forbidden_actor_moves=" + ", ".join(f"{coord}->{move}" for coord, move in forbidden))
 
 
 def main() -> int:
@@ -753,14 +957,26 @@ def main() -> int:
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--game-root", type=Path, help="Override configured Worlds directory")
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
+    parser.add_argument("--state-path", type=Path, help="Override legacy JSON state path for --from-live-state")
     parser.add_argument("--world", help="World folder. Defaults to current save world.")
     parser.add_argument("--level", help="Level id. Defaults to current save level.")
+    parser.add_argument(
+        "--from-live-state",
+        action="store_true",
+        help="Search from the exported live state instead of the initial .l level file.",
+    )
     parser.add_argument(
         "--make-rule",
         nargs=3,
         metavar=("SUBJECT", "IS", "PROPERTY"),
-        default=("flag", "is", "win"),
+        default=None,
         help="Rule to build, e.g. --make-rule flag is win",
+    )
+    parser.add_argument(
+        "--make-prefix",
+        nargs=2,
+        metavar=("SUBJECT", "IS"),
+        help="Two-text prefix to build or preserve, e.g. --make-prefix star is",
     )
     parser.add_argument(
         "--select-text",
@@ -768,6 +984,13 @@ def main() -> int:
         default=[],
         metavar="WORD",
         help="Also include all text_WORD blocks in the movable search state.",
+    )
+    parser.add_argument(
+        "--select-text-at",
+        action="append",
+        default=[],
+        metavar="WORD@X,Y",
+        help="Include only one text word at a coordinate, e.g. --select-text-at is@12,12.",
     )
     parser.add_argument("--all-is", action="store_true", help="Include every text_is block as movable")
     parser.add_argument("--allow-break-you", action="store_true", help="Do not require the initial YOU rule to stay active")
@@ -786,6 +1009,17 @@ def main() -> int:
         default=2,
         help="Search target rule patterns inside the relevant text bounding box plus this margin.",
     )
+    parser.add_argument(
+        "--target-start",
+        metavar="X,Y",
+        help="Constrain the goal rule/prefix to start at this coordinate.",
+    )
+    parser.add_argument(
+        "--target-dir",
+        choices=["right", "down"],
+        default="right",
+        help="Direction for --target-start. Use down for vertical rules.",
+    )
     parser.add_argument("--execute", action="store_true", help="Send the found route")
     parser.add_argument(
         "--delay",
@@ -794,15 +1028,39 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    subject, middle, prop = (part.lower() for part in args.make_rule)
+    if args.make_prefix and args.make_rule:
+        raise SystemExit("Use either --make-prefix or --make-rule, not both")
+    if args.make_prefix:
+        subject, middle = (part.lower() for part in args.make_prefix)
+        prop = None
+    else:
+        subject, middle, prop = (part.lower() for part in (args.make_rule or ("flag", "is", "win")))
     if middle != "is":
-        raise SystemExit("--make-rule must be shaped like: SUBJECT is PROPERTY")
+        raise SystemExit("Goal must be shaped like: SUBJECT is [PROPERTY]")
+
+    def parse_coord(raw: str, flag: str) -> Coord:
+        try:
+            left, right = raw.split(",", 1)
+            return (int(left), int(right))
+        except ValueError as exc:
+            raise SystemExit(f"{flag} must be shaped like X,Y") from exc
+
+    selected_text_at: list[tuple[str, Coord]] = []
+    for raw in args.select_text_at:
+        try:
+            word, raw_coord = raw.lower().split("@", 1)
+        except ValueError as exc:
+            raise SystemExit("--select-text-at must be shaped like WORD@X,Y") from exc
+        selected_text_at.append((word, parse_coord(raw_coord, "--select-text-at")))
 
     config = load_config(args.config)
     game_root = args.game_root or config.game_root
     save_dir = args.save_dir or config.save_dir
     delay = args.delay if args.delay is not None else config.input_delay
-    level = load_level(game_root, save_dir, args.world, args.level)
+    if args.from_live_state:
+        level = load_live_level(save_dir, state_path(save_dir, args.state_path))
+    else:
+        level = load_level(game_root, save_dir, args.world, args.level)
     search_config = SearchConfig(
         goal_subject=subject,
         goal_property=prop,
@@ -811,8 +1069,16 @@ def main() -> int:
         max_states=args.max_states,
         heuristic_weight=args.heuristic_weight,
         pattern_margin=args.pattern_margin,
+        target_start=parse_coord(args.target_start, "--target-start") if args.target_start else None,
+        target_dir=args.target_dir,
     )
-    problem = build_problem(level, search_config, extra_words=args.select_text, all_is=args.all_is)
+    problem = build_problem(
+        level,
+        search_config,
+        extra_words=args.select_text,
+        selected_text_at=selected_text_at,
+        all_is=args.all_is,
+    )
     print_analysis(problem)
 
     if args.analyze:

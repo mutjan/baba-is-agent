@@ -2,7 +2,7 @@
 
 Local macOS tooling for reading and controlling Baba Is You from Codex.
 
-Only tested on Codex on macOS.
+Only supports macOS. Tested on Codex, ClaudeCode, OpenCode, and Claude-Agent-SDK.
 
 ## Demo
 
@@ -296,7 +296,7 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 
 ## Current Limits
 
-- Only tested on Codex on macOS.
+- Only supports macOS. Tested on Codex, ClaudeCode, OpenCode, and Claude-Agent-SDK.
 - Static level parsing reads the initial level layout, not live per-turn object
   state after arbitrary moves.
 - Live per-turn object positions require the optional Lua exporter.
