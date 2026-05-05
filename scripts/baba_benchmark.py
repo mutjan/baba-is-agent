@@ -32,7 +32,7 @@ from parse_baba_level import (
     parse_level_binary,
     read_ini_like,
 )
-from read_baba_state import current_save_file, load_save_state
+from read_baba_state import current_save_file, load_agent_state
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,15 +41,23 @@ RUNS_ROOT = ROOT / "runs"
 RUN_FILE_NAMES = {
     "benchmark_log": "baba_benchmark_log.md",
     "level_notes": "baba_level_notes.md",
+    "route_plan": "baba_route_plan.md",
     "learned_rules": "baba_learned_rules.md",
     "growth_diary": "baba_growth_diary.md",
 }
 KNOWN_ROUTES_NAME = "baba_known_routes.json"
 RUN_TEMPLATES = {
     "level_notes": RUNS_ROOT / "baba_level_notes.template.md",
+    "route_plan": RUNS_ROOT / "baba_route_plan.template.md",
     "learned_rules": RUNS_ROOT / "baba_learned_rules.template.md",
     "growth_diary": RUNS_ROOT / "baba_growth_diary.template.md",
 }
+SOLVING_NEXT_COMMANDS = (
+    "python3 scripts/read_baba_state.py --limit 20 ; "
+    "python3 scripts/baba_suggest_hypotheses.py --top 5 ; "
+    "python3 scripts/parse_baba_level.py --rules-only ; "
+    "python3 scripts/baba_action_check.py '<short segment>' --expect-moved-delta '<unit-or-text>:<dir>'"
+)
 
 
 def utc_now() -> datetime:
@@ -62,7 +70,7 @@ def iso(dt: datetime) -> str:
 
 def run_dir_for(run_id: str) -> Path:
     if not re.fullmatch(r"\d{3}_[A-Za-z0-9][A-Za-z0-9_.-]*", run_id):
-        raise SystemExit("run_id must look like 001_codex_gpt55 or 002_claude_sonnet")
+        raise SystemExit("run_id must look like 001_agent_model or 002_claude_sonnet")
     return RUNS_ROOT / run_id
 
 
@@ -117,7 +125,7 @@ def completion_status(save_dir: Path, world: str, level: str) -> int | None:
 
 
 def live_state_meta(save_dir: Path) -> dict[str, Any]:
-    state = load_save_state(save_file_for(save_dir))
+    state = load_agent_state(save_file_for(save_dir))
     if not state:
         return {}
     meta = state.get("meta") or {}
@@ -186,6 +194,14 @@ def ensure_run_files(run_dir: Path, files: dict[str, Path]) -> None:
     defaults = {
         "benchmark_log": "# Baba Benchmark Log\n\n",
         "level_notes": "# Baba Is You Level Notes\n\n",
+        "route_plan": (
+            "# Baba Route Plan\n\n"
+            "Temporary scratchpad for planned short route segments. "
+            "This file is not a known-route source during benchmark solving. "
+            "After check=fail, read_baba_state.py --limit 60 first. "
+            "Do not use expanded_move_count as an undo count; if undo is necessary, "
+            "use baba_undo.py --steps 1 and observe.\n\n"
+        ),
         "learned_rules": "# Baba Is You Learned Rules\n\n",
         "growth_diary": "# Baba Growth Diary\n\n",
     }
@@ -210,9 +226,9 @@ def known_routes_path(run_dir: Path) -> Path:
 def load_known_routes(path: Path) -> dict[str, Any]:
     if path.exists():
         doc = json.loads(path.read_text(encoding="utf-8"))
-        if doc.get("schema") == "codex-baba-known-routes-v1" and isinstance(doc.get("routes"), dict):
+        if doc.get("schema") == "baba-agent-known-routes-v1" and isinstance(doc.get("routes"), dict):
             return doc
-    return {"schema": "codex-baba-known-routes-v1", "routes": {}}
+    return {"schema": "baba-agent-known-routes-v1", "routes": {}}
 
 
 def update_known_routes(record: dict[str, Any], run_dir: Path) -> None:
@@ -331,7 +347,7 @@ def start_attempt_record(
     started_at = iso(utc_now())
     rules = initial_rules(config, world, level)
     record = {
-        "schema": "codex-baba-benchmark-active-v1",
+        "schema": "baba-agent-benchmark-active-v1",
         "started_at": started_at,
         "start_time": time.time(),
         "world": world,
@@ -397,7 +413,7 @@ def record_manual_pass(
     completed_at = iso(utc_now())
     rounded_elapsed = round(elapsed, 3)
     route_steps = len(expand_moves(args.moves))
-    game_turns = live_pass_turn_count(save_dir, world, level)
+    game_turns = args.game_turns if args.game_turns is not None else live_pass_turn_count(save_dir, world, level)
     score_steps = game_turns if game_turns is not None else route_steps
     score_source = "live_state_turn" if game_turns is not None else "expanded_route_steps"
     record = {
@@ -430,6 +446,50 @@ def record_manual_pass(
     )
 
 
+def warn_force_new_abandons_active(
+    active_path: Path,
+    save_dir: Path,
+    files: dict[str, Path],
+    *,
+    current_world: str,
+    current_level_id: str,
+    dry_run: bool,
+) -> None:
+    if not active_path.exists():
+        return
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+    active_world = str(active.get("world") or "")
+    active_level = str(active.get("level") or "")
+    active_status = completion_status(save_dir, active_world, active_level)
+    if active_status == 3:
+        print("force_new_warning=active level is already complete but not recorded; record_pass should usually run before --force-new")
+    else:
+        print("force_new_warning=abandoning unfinished active benchmark attempt without a recorded pass")
+    print("force_new_abandons_active=true")
+    print(f"previous_active={active_world}/{active_level} name={active.get('name')}")
+    print(f"previous_active_completion_status={active_status}")
+    print(f"new_active={current_world}/{current_level_id}")
+    print("warning=benchmark continuity is broken unless the user explicitly chose to abandon the previous level")
+    print("safer_next=omit --force-new and finish/record the active level, or confirm this is an intentional manual level switch")
+    if dry_run:
+        return
+    try:
+        ensure_run_files(files["benchmark_log"].parent, files)
+        append(
+            files["benchmark_log"],
+            (
+                f"## {iso(utc_now())} abandoned active {active_level} / {active.get('name')}\n\n"
+                f"- reason: `--force-new`\n"
+                f"- previous_active: `{active_world}/{active_level}`\n"
+                f"- previous_completion_status: `{active_status}`\n"
+                f"- new_active: `{current_world}/{current_level_id}`\n"
+                f"- warning: unfinished active benchmark attempt was replaced without a recorded pass.\n\n"
+            ),
+        )
+    except OSError as exc:
+        print(f"force_new_log_warning={exc}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
@@ -439,6 +499,7 @@ def main() -> int:
     parser.add_argument("--name", help="Level name for a newly recorded manual route")
     parser.add_argument("--moves", help="Route moves for --record-pass")
     parser.add_argument("--note", default="", help="Short route note for --record-pass")
+    parser.add_argument("--game-turns", type=int, help="Final live-state turn from the winning action_check output.")
     parser.add_argument("--hold-ms", type=int, help="Override route/default key hold")
     parser.add_argument("--after-restart-wait", type=float, default=0.5)
     parser.add_argument("--enter-next", action="store_true", help="Enter the next unlocked map level before benchmarking")
@@ -450,7 +511,7 @@ def main() -> int:
     parser.add_argument("--force-new", action="store_true", help="Start a new attempt even if one is already active")
     parser.add_argument(
         "--run-id",
-        help="Per-agent run directory name, e.g. 001_codex_gpt55. Overrides config current_run_id.",
+        help="Per-agent run directory name, e.g. 001_agent_model. Overrides config current_run_id.",
     )
     args = parser.parse_args()
 
@@ -498,9 +559,22 @@ def main() -> int:
             print("reason=Active benchmark attempt does not match the live level. Do not solve or record until this is fixed.")
             print("next_commands=python3 start_benchmark.py --force-new")
             return 2
-        print("next_commands=python3 scripts/read_baba_state.py ; python3 scripts/parse_baba_level.py --rules-only ; python3 scripts/baba_action_check.py '<short segment>' --expect-moved '<unit-or-text>'")
+        print("failure_rule=after check=fail read_baba_state.py --limit 60 first; expanded_move_count is not a safe undo count; use baba_undo.py --steps 1 only when undo is truly needed")
+        print("route_plan=runs/<current_run_id>/baba_route_plan.md is auto-updated by baba_action_check.py")
+        print(f"next_commands={SOLVING_NEXT_COMMANDS}")
+        print("anti_overthink_rule=after reading state, run baba_suggest_hypotheses.py --top 5 before any maze/path or rule-arrangement prose longer than 5 lines")
         print(f"record_command=python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
         return 0
+
+    if active_path.exists() and args.force_new:
+        warn_force_new_abandons_active(
+            active_path,
+            save_dir,
+            files,
+            current_world=world,
+            current_level_id=level,
+            dry_run=args.dry_run,
+        )
 
     if not args.dry_run:
         start_attempt_record(config, save_dir, world, level, name, run_dir, files, active_path)
@@ -509,7 +583,10 @@ def main() -> int:
     print("benchmark_mode=from_zero_state_guided")
     print("score_metric=pass_step_count")
     print("known_routes_used=0")
-    print("next_commands=python3 scripts/read_baba_state.py ; python3 scripts/parse_baba_level.py --rules-only ; python3 scripts/baba_action_check.py '<short segment>' --expect-moved '<unit-or-text>'")
+    print("failure_rule=after check=fail read_baba_state.py --limit 60 first; expanded_move_count is not a safe undo count; use baba_undo.py --steps 1 only when undo is truly needed")
+    print("route_plan=runs/<current_run_id>/baba_route_plan.md is auto-updated by baba_action_check.py")
+    print(f"next_commands={SOLVING_NEXT_COMMANDS}")
+    print("anti_overthink_rule=after reading state, run baba_suggest_hypotheses.py --top 5 before any maze/path or rule-arrangement prose longer than 5 lines")
     print(f"record_command=python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
     return 0
 

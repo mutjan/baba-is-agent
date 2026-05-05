@@ -34,7 +34,7 @@ Do not hard-code level-specific solved routes inside generic Python logic.
 Known solved routes live as run-local data in
 `runs/<number_agent_model>/baba_known_routes.json`; the generic replay entry is
 `scripts/baba_play_known_route.py`. Judgment-heavy notes belong in each agent's run directory, for example
-`runs/001_codex_gpt55/baba_level_notes.md`.
+`runs/001_agent_model/baba_level_notes.md`.
 
 ## What Belongs In Markdown
 
@@ -49,7 +49,7 @@ Write Markdown when the information needs judgment or context:
 Use `docs/` for reusable method. Use each run directory's
 `baba_known_routes.json` only for machine-readable known-route replay data. Use
 root `runs/*.template.md` files as the publishable format contract. Real agent records go under
-`runs/<number_agent_model>/`, such as `runs/001_codex_gpt55/`.
+`runs/<number_agent_model>/`, such as `runs/001_agent_model/`.
 
 ## Benchmark Entry
 

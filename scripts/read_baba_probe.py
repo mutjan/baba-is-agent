@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read the minimal Codex Baba Is You Lua probe from world_data.txt."""
+"""Read the minimal Baba Is You Lua probe for agent tooling."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from baba_config import load_config
 from parse_baba_level import current_level, read_ini_like
 
 
-PROBE_SCHEMA = "codex-baba-state-probe-v1"
+PROBE_SCHEMA = "baba-agent-state-probe-v1"
 
 
 def probe_path(worlds_dir: Path, world: str) -> Path:
@@ -23,7 +23,7 @@ def probe_path(worlds_dir: Path, world: str) -> Path:
 def read_probe(path: Path) -> dict[str, str] | None:
     if not path.exists():
         return None
-    data = read_ini_like(path).get("codex_probe")
+    data = read_ini_like(path).get("agent_probe")
     if not data or data.get("schema") != PROBE_SCHEMA:
         return None
     return data

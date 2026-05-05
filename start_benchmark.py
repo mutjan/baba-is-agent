@@ -35,6 +35,8 @@ Basic Baba Is You rules for benchmark agents
 - PUSH means a YOU object can push that object or text one tile if the whole
   pushed chain has free space behind it. If the space behind the chain is STOP,
   the map edge, or another unpushable blocker, the push does not happen.
+- Before any PUSH/TEXT move, explicitly check the chain tail: every pushed item
+  moves one tile, and the cell after the far end must be free.
 - Pushed text can create or break rules. Moving IS, YOU, WIN, STOP, PUSH, OPEN,
   SHUT, or noun words is often the main way to solve a level.
 - Dead corners and one-tile pockets are a general risk. If a key text/object is
@@ -42,14 +44,17 @@ Basic Baba Is You rules for benchmark agents
   side, it may become unusable from the needed direction later. Treat this as a
   generic mechanism to test, not as a level-specific coordinate hint.
 - On the world map/overworld, do not look for Baba. The controllable object is
-  the live-state cursor under the base rule cursor is select; use map_route or
-  navigate_next to enter a real level.
+  the live-state cursor under the base rule cursor is select; use MCP
+  navigate_next or script fallback `python3 scripts/baba_map_route.py --execute`
+  to enter a real level.
 - On macOS, the app is configured as Baba Is You, but the live process may be
   Chowdren. Use app_status rather than checking only for a Baba Is You process.
 - Passing evidence is the save completion status becoming 3, not a command exit
   code and not frontmost=Chowdren.
-- map_route/navigate_next only enters a level. After entering, call
+- MCP navigate_next / script baba_map_route.py --execute only enters a level. After entering, call
   start_benchmark before solving so the active attempt matches the live level.
+- MCP tool names are not script names. There is no scripts/baba_navigate_next.py.
+  If MCP is unavailable, use scripts/baba_map_route.py --execute.
 - If start_benchmark reports active_state_mismatch=true, stop solving and run
   the printed --force-new command. Do not repair records with --record-pass
   --level unless the user explicitly asks for benchmark log repair.
@@ -67,12 +72,39 @@ Efficiency protocol
   Hypothesis, Action, Result, Next.
 - Do not validate a route in hidden thinking. Use check_moves or
   scripts/baba_action_check.py with an explicit --expect-* argument.
+- Bare --expect-moved is weak for multi-step moves or pushed text. Use
+  --expect-moved-delta UNIT:DIR or --expect-position UNIT X,Y so the script can
+  verify direction or endpoint instead of only "something moved".
+- After baba_suggest_hypotheses.py or one baba_search_route.py --analyze output,
+  immediately choose one 1-8 step check_moves/action_check segment with an
+  explicit expected delta. Do not write more than 5 lines of rule-arrangement
+  reasoning before the next action_check.
+- If the next target is a text/rule push, shrink the next action_check to 1-3
+  steps before simulating the full route in prose.
+- action_check rejects contradictory rule expectations, and completion status 3
+  checks require an active WIN rule unless this segment explicitly expects a
+  new X IS WIN rule.
+- Guard critical rules as invariants. For example, while building wall is win,
+  pass --expect-rule-kept 'wall is you'; when a bad rule would trap you, use
+  --forbid-rule-added or --forbid-rule-present.
+- If check_moves/action_check returns check=fail, first run
+  read_baba_state.py --limit 60. Do not treat expanded_move_count as a safe
+  undo count: blocked/no-op inputs can make z*N erase earlier successful
+  progress. If undo is necessary, use baba_undo.py --steps 1 and observe.
+  Do not explain what should have happened, do not continue from mental
+  coordinates, do not run another long segment, and do not use action_check for
+  undo.
 - Keep normal level action segments to 1-8 moves unless the state change is
   completely predictable.
 - If you start writing "this is complicated" or keep reconsidering the same
   branch, stop thinking and run a smaller observable test.
 - Do not enumerate every possible text alignment or map route. Use tool output
   as the authority, then test the cheapest meaningful action.
+- If a plan contains more than one action segment, write it to the current run's
+  baba_route_plan.md first. Keep only 1-3 pending segments, each with moves,
+  expected delta, state anchor, and status. check_moves/action_check appends its
+  own planned segment plus observed result automatically.
+- baba_route_plan.md is a scratchpad, not a solution source.
 """
 
 
@@ -92,11 +124,11 @@ thinking short and let tools validate the route. Level 0 starts with Baba at
    Hypothesis: right*4 should push the middle rock and prove the corridor plan works.
    Action:
      MCP check_moves arguments:
-       {"moves":"right*4","expect_moved":["rock"]}
+       {"moves":"right*4","expect_moved_delta":["rock:+x"]}
      Script fallback:
-       python3 scripts/baba_action_check.py 'right*4' --expect-moved rock
-   Result: if check=pass, continue from the new live state; if check=fail, do not
-   repair in thought, restart or shorten the action.
+       python3 scripts/baba_action_check.py 'right*4' --expect-moved-delta rock:+x
+   Result: if check=pass, continue from the new live state; if check=fail, only
+   reread live state or restart. Do not repair in thought.
 
 3. Second short hypothesis:
    Observation: the same corridor is still aligned with the flag.
@@ -138,7 +170,7 @@ it portable: use relative paths, and do not include secrets or user-specific
     }
   }
 
-Codex CLI currently exposes user-level MCP config, so install it per user:
+For Codex CLI, install the MCP server per user:
 
   codex mcp add baba-is-you -- python3 "$(pwd)/scripts/baba_mcp_server.py"
   codex mcp list
@@ -278,16 +310,29 @@ def print_next_steps() -> None:
     print("4. check_moves with one explicit expected delta")
     print("5. try_moves only when debugging raw deltas")
     print("6. restart_level if an experiment goes bad")
-    print("7. return_to_map when you need to leave a level or sub-map")
-    print("8. navigate_next when on the world map/overworld")
-    print("9. record_pass only after completion status is 3")
+    print("7. undo_moves to undo the last failed action segment")
+    print("8. return_to_map when you need to leave a level or sub-map")
+    print("9. navigate_next when on the world map/overworld (MCP tool only)")
+    print("10. record_pass only after completion status is 3")
     print()
     print("Script fallback:")
-    print("python3 scripts/baba_action_check.py '<short move segment>' --expect-moved '<unit-or-text>'")
+    print("MCP tool names are not script names; do not invent scripts/baba_navigate_next.py.")
+    print("On a map/overworld, use: python3 scripts/baba_map_route.py --execute")
+    print("After check=fail, first use: python3 scripts/read_baba_state.py --limit 60")
+    print("If undo is truly needed, use one observed step: python3 scripts/baba_undo.py --steps 1")
+    print("python3 scripts/baba_action_check.py '<short move segment>' --expect-moved-delta '<unit-or-text>:<dir>'")
+    print("python3 scripts/baba_action_check.py '<short move segment>' --expect-position '<unit-or-text>' X,Y")
     print("python3 scripts/baba_try.py '<short move segment>'")
     print("python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
     print()
     print("Efficiency rule: explain one hypothesis, execute one short observable segment, then let the script decide.")
+    print("Hypothesis rule: after suggest_hypotheses or one --analyze, immediately run one 1-8 step action_check; no >5-line rule-arrangement reasoning.")
+    print("Text rule: for text/rule pushes, the next action_check should be 1-3 steps before any longer route prose.")
+    print("Invariant rule: use --expect-rule-kept for current YOU/WIN setup and --forbid-rule-added for bad rules like wall is stop.")
+    print("Movement rule: multi-step/text movement needs --expect-moved-delta or --expect-position; bare --expect-moved is only for tiny debugging.")
+    print("Push rule: chain pushes need free space after the far end; corner/edge/pocket pushes are high-risk until a short action_check proves them safe.")
+    print("Failure rule: after check=fail, read state first; expanded_move_count is not a safe undo count; only single-step observed undo unless manually overridden.")
+    print("Route plan rule: action_check appends planned short segments and observed results to runs/<current_run_id>/baba_route_plan.md.")
     print("Output rule: keep each solving update to Observation/Hypothesis/Action/Result/Next, 5 lines max.")
     print()
     print("For the full agent operating contract, read AGENTS.md.")

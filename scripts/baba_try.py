@@ -67,8 +67,7 @@ def parse_focus(raw: str | None) -> set[str] | None:
 def focused(name: str, focus: set[str] | None) -> bool:
     if focus is None:
         return True
-    bare = name.removeprefix("text_")
-    return name in focus or bare in focus
+    return name in focus
 
 
 def print_header(state: dict[str, Any], label: str) -> None:
@@ -101,6 +100,8 @@ def print_delta(
         print("rules_removed=" + "; ".join(removed_rules))
     if not added_rules and not removed_rules:
         print("rules_delta=<none>")
+    print("active_rules_before=" + ("; ".join(sorted(before_rules)) or "<none>"))
+    print("active_rules_after=" + ("; ".join(sorted(after_rules)) or "<none>"))
 
     before_units = visible_units(before)
     after_units = visible_units(after)
@@ -155,7 +156,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
     parser.add_argument("--app-name", help="Override configured macOS app name")
-    parser.add_argument("--state-path", type=Path, help="Override legacy JSON state path")
+    parser.add_argument("--state-path", type=Path, help="Override JSON state path")
     parser.add_argument("--timeout", type=float, default=3.0, help="Seconds to wait after each move")
     parser.add_argument(
         "--delay",

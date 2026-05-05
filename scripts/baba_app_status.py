@@ -17,7 +17,8 @@ from typing import Any
 
 from baba_config import load_config
 from baba_send_keys import frontmost_process
-from read_baba_state import current_save_file, load_save_state
+from parse_baba_level import current_level
+from read_baba_state import current_save_file, load_agent_state
 
 
 KNOWN_APP_PROCESS_NAMES = ("Baba Is You",)
@@ -78,35 +79,49 @@ def detect_running_process(processes: list[str], app_name: str) -> tuple[bool, s
 
 def read_save_status(save_dir: Path) -> dict[str, Any]:
     status: dict[str, Any] = {
-        "save_state_available": False,
-        "save_state_error": "",
+        "runtime_state_available": False,
+        "runtime_state_error": "",
     }
     try:
+        slot, previous_world, previous_level = current_level(save_dir)
         save_file = current_save_file(save_dir)
-        status["save_state_path"] = str(save_file)
-        status["save_state_file_exists"] = save_file.exists()
+        status["save_slot"] = slot
+        status["save_previous_world"] = previous_world
+        status["save_previous_level"] = previous_level
+        status["runtime_state_path"] = str(save_file)
+        status["runtime_state_file_exists"] = save_file.exists()
         if not save_file.exists():
             return status
-        state = load_save_state(save_file)
+        state = load_agent_state(save_file)
         if state is None:
-            status["save_state_error"] = "codex_state section not found"
+            status["runtime_state_error"] = "agent_state section not found"
             return status
         meta = state.get("meta", {})
+        state_world = meta.get("world") or ""
+        state_level = meta.get("level") or ""
+        matches_previous = state_world == previous_world and state_level == previous_level
         status.update(
             {
-                "save_state_available": True,
-                "state_world": meta.get("world") or "",
-                "state_level": meta.get("level") or "",
+                "runtime_state_available": True,
+                "state_world": state_world,
+                "state_level": state_level,
                 "state_level_name": meta.get("level_name") or "",
                 "state_turn": meta.get("turn"),
                 "state_source": meta.get("source") or "",
                 "state_last_command": meta.get("last_command") or "",
+                "state_matches_save_previous": matches_previous,
             }
         )
+        if not matches_previous:
+            status["state_warning"] = (
+                "agent_state level differs from save Previous; the exporter "
+                "snapshot may be stale, or the game may be inside a child level. "
+                "Verify visually or refresh state before benchmarking."
+            )
     except SystemExit as exc:
-        status["save_state_error"] = str(exc)
+        status["runtime_state_error"] = str(exc)
     except Exception as exc:  # noqa: BLE001 - status scripts should report, not crash.
-        status["save_state_error"] = f"{type(exc).__name__}: {exc}"
+        status["runtime_state_error"] = f"{type(exc).__name__}: {exc}"
     return status
 
 
@@ -181,16 +196,21 @@ def print_key_values(status: dict[str, Any]) -> None:
         "save_dir",
         "game_files_found",
         "state_exporter_installed",
-        "save_state_available",
-        "save_state_path",
-        "save_state_file_exists",
-        "save_state_error",
+        "save_slot",
+        "save_previous_world",
+        "save_previous_level",
+        "runtime_state_available",
+        "runtime_state_path",
+        "runtime_state_file_exists",
+        "runtime_state_error",
         "state_world",
         "state_level",
         "state_level_name",
         "state_turn",
         "state_source",
         "state_last_command",
+        "state_matches_save_previous",
+        "state_warning",
         "note",
     ]
     for key in ordered_keys:

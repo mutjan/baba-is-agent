@@ -21,14 +21,14 @@ from baba_send_keys import (
 from read_baba_state import current_save_file, load_state, summarize
 
 
-def state_path(save_dir: Path, override: Path | None) -> Path:
+def state_path(save_dir: Path, override: Path | None) -> Path | None:
     if override is not None:
         return override.expanduser().resolve()
-    return (save_dir / "codex_state.json").expanduser().resolve()
+    return None
 
 
-def current_state_mtime(path: Path, save_dir: Path) -> float | None:
-    if path.exists():
+def current_state_mtime(path: Path | None, save_dir: Path) -> float | None:
+    if path is not None and path.exists():
         return path.stat().st_mtime
     save_file = current_save_file(save_dir)
     if save_file.exists():
@@ -50,7 +50,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
     parser.add_argument("--app-name", help="Override configured macOS app name")
-    parser.add_argument("--state-path", type=Path, help="Override legacy JSON state path")
+    parser.add_argument("--state-path", type=Path, help="Override JSON state path")
     parser.add_argument("--timeout", type=float, default=3.0, help="Seconds to wait after each move")
     parser.add_argument(
         "--delay",
@@ -80,8 +80,8 @@ def main() -> int:
     live_state_path = state_path(save_dir, args.state_path)
 
     print("moves=" + ",".join(moves))
-    print(f"state_path={live_state_path}")
-    print(f"save_state_path={current_save_file(save_dir)}")
+    print(f"json_state_path={live_state_path or '<none>'}")
+    print(f"runtime_state_path={current_save_file(save_dir)}")
 
     if args.dry_run:
         return 0

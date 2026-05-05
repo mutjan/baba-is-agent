@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install or remove the Codex Baba Is You Lua state exporter."""
+"""Install or remove the Baba Is You Lua state exporter for agents."""
 
 from __future__ import annotations
 
@@ -19,16 +19,16 @@ from baba_config import (
 from parse_baba_level import current_level
 
 
-SOURCE_PATH = PROJECT_ROOT / "lua" / "codex_state_export.lua"
+SOURCE_PATH = PROJECT_ROOT / "lua" / "agent_state_export.lua"
 TARGET_NAME = STATE_EXPORTER_TARGET_NAME
 MARKER = STATE_EXPORTER_MARKER
-PROBE_SOURCE_PATH = PROJECT_ROOT / "lua" / "codex_state_probe.lua"
-PROBE_TARGET_NAME = "codex_state_probe.lua"
-PROBE_MARKER = "codex-baba-state-probe-v1"
-LOADER_BEGIN = "-- BEGIN CODEX BABA STATE EXPORTER LOADER"
-LOADER_END = "-- END CODEX BABA STATE EXPORTER LOADER"
-COMMAND_LOADER_BEGIN = "-- BEGIN CODEX BABA STATE EXPORTER COMMAND LOADER"
-COMMAND_LOADER_END = "-- END CODEX BABA STATE EXPORTER COMMAND LOADER"
+PROBE_SOURCE_PATH = PROJECT_ROOT / "lua" / "agent_state_probe.lua"
+PROBE_TARGET_NAME = "agent_state_probe.lua"
+PROBE_MARKER = "baba-agent-state-probe-v1"
+LOADER_BEGIN = "-- BEGIN BABA AGENT STATE EXPORTER LOADER"
+LOADER_END = "-- END BABA AGENT STATE EXPORTER LOADER"
+COMMAND_LOADER_BEGIN = "-- BEGIN BABA AGENT STATE EXPORTER COMMAND LOADER"
+COMMAND_LOADER_END = "-- END BABA AGENT STATE EXPORTER COMMAND LOADER"
 
 
 def lua_string_literal(value: str) -> str:
@@ -62,8 +62,8 @@ def render_command_loader() -> str:
     return "\n".join(
         [
             "\t" + COMMAND_LOADER_BEGIN,
-            "\tif CODEX_STATE_EXPORTER_COMMAND_LOADED ~= true then",
-            "\t\tCODEX_STATE_EXPORTER_COMMAND_LOADED = true",
+            "\tif BABA_AGENT_STATE_EXPORTER_COMMAND_LOADED ~= true then",
+            "\t\tBABA_AGENT_STATE_EXPORTER_COMMAND_LOADED = true",
             f"\t\tlocal exporter = {lua_string_literal('Data/Lua/' + TARGET_NAME)}",
             "\t\tdofile(exporter)",
             "\tend",
@@ -87,7 +87,7 @@ def install(target: Path, rendered: str, *, dry_run: bool, force: bool, marker: 
             return 0
         if marker not in current and not force:
             raise SystemExit(
-                f"{target} exists and does not look like a Codex exporter. "
+                f"{target} exists and does not look like an agent state exporter. "
                 "Use --force to replace it."
             )
         backup = backup_path(target)
@@ -109,7 +109,7 @@ def uninstall(target: Path, *, dry_run: bool, force: bool, marker: str) -> int:
     current = target.read_text(encoding="utf-8", errors="replace")
     if marker not in current and not force:
         raise SystemExit(
-            f"{target} does not look like a Codex exporter. Use --force to remove it."
+            f"{target} does not look like an agent state exporter. Use --force to remove it."
         )
 
     print(f"remove={target}")
@@ -294,7 +294,7 @@ def main() -> int:
     print(f"artifact={'probe' if args.probe else 'exporter'}")
     print(f"scope={scope}")
     print(f"world={world}")
-    print(f"state_storage=world:[codex_probe]" if args.probe else "state_storage=save:[codex_state]")
+    print(f"state_storage=world:[agent_probe]" if args.probe else "state_storage=save:[agent_state]")
     print(f"patch_loader={args.patch_loader}")
     print(f"patch_command_loader={args.patch_command_loader}")
 

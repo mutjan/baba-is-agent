@@ -1,4 +1,4 @@
--- Lightweight live-state exporter for Codex-controlled Baba Is You sessions.
+-- Lightweight live-state exporter for agent-controlled Baba Is You sessions.
 --
 -- Install this file into the game's Data/Lua directory. The game loads files
 -- there through modsupport.lua, then these hooks store the current runtime
@@ -6,13 +6,13 @@
 -- undo, and win events. This avoids relying on standard Lua io/os/pcall,
 -- which are not available in Baba's embedded Lua runtime.
 
-local CODEX_EXPORT_MARKER = "codex-baba-state-export-v1"
+local AGENT_EXPORT_MARKER = "baba-agent-state-export-v1"
 
-CodexStateExport = CodexStateExport or {}
-CodexStateExport.turn = CodexStateExport.turn or 0
-CodexStateExport.sequence = CodexStateExport.sequence or 0
-CodexStateExport.last_command = CodexStateExport.last_command or ""
-CodexStateExport.last_player = CodexStateExport.last_player or 0
+AgentStateExport = AgentStateExport or {}
+AgentStateExport.turn = AgentStateExport.turn or 0
+AgentStateExport.sequence = AgentStateExport.sequence or 0
+AgentStateExport.last_command = AgentStateExport.last_command or ""
+AgentStateExport.last_player = AgentStateExport.last_player or 0
 
 local function read_string(object, index)
 	if (index ~= nil) and (object ~= nil) and (object.strings ~= nil) then
@@ -245,12 +245,12 @@ end
 
 local function metadata(source)
 	return {
-		schema = CODEX_EXPORT_MARKER,
+		schema = AGENT_EXPORT_MARKER,
 		source = source,
-		turn = CodexStateExport.turn,
-		sequence = CodexStateExport.sequence,
-		last_command = CodexStateExport.last_command,
-		last_player = CodexStateExport.last_player,
+		turn = AgentStateExport.turn,
+		sequence = AgentStateExport.sequence,
+		last_command = AgentStateExport.last_command,
+		last_player = AgentStateExport.last_player,
 		world = read_string(generaldata, WORLD),
 		level = read_string(generaldata, CURRLEVEL),
 		level_name = read_string(generaldata, LEVELNAME),
@@ -282,7 +282,7 @@ local function join_fields(values, count)
 end
 
 local function store_value(key, value)
-	MF_store("save", "codex_state", key, tostring(value or ""))
+	MF_store("save", "agent_state", key, tostring(value or ""))
 end
 
 local function store_rows(prefix, rows, encode_row)
@@ -297,13 +297,13 @@ local function write_export(source)
 		return
 	end
 
-	CodexStateExport.sequence = CodexStateExport.sequence + 1
+	AgentStateExport.sequence = AgentStateExport.sequence + 1
 	local meta = metadata(source)
 	local rules = collect_rules()
 	local units = collect_units()
 	local feature_index = collect_feature_index()
 
-	store_value("schema", CODEX_EXPORT_MARKER)
+	store_value("schema", AGENT_EXPORT_MARKER)
 	store_value("source", meta.source)
 	store_value("turn", meta.turn)
 	store_value("sequence", meta.sequence)
@@ -365,22 +365,22 @@ local function register_hook(name, callback)
 end
 
 register_hook("level_start", function()
-	CodexStateExport.turn = 0
-	CodexStateExport.last_command = "level_start"
-	CodexStateExport.last_player = 0
+	AgentStateExport.turn = 0
+	AgentStateExport.last_command = "level_start"
+	AgentStateExport.last_player = 0
 	safe_export("level_start")
 end)
 
 register_hook("command_given", function(extra)
-	CodexStateExport.turn = CodexStateExport.turn + 1
-	CodexStateExport.last_command = tostring(extra[1] or "")
-	CodexStateExport.last_player = tonumber(extra[2] or 0) or 0
+	AgentStateExport.turn = AgentStateExport.turn + 1
+	AgentStateExport.last_command = tostring(extra[1] or "")
+	AgentStateExport.last_player = tonumber(extra[2] or 0) or 0
 end)
 
 register_hook("turn_auto", function(extra)
-	CodexStateExport.turn = CodexStateExport.turn + 1
-	CodexStateExport.last_command = "auto:" .. tostring(extra[1] or "") .. "," .. tostring(extra[2] or "")
-	CodexStateExport.last_player = 0
+	AgentStateExport.turn = AgentStateExport.turn + 1
+	AgentStateExport.last_command = "auto:" .. tostring(extra[1] or "") .. "," .. tostring(extra[2] or "")
+	AgentStateExport.last_player = 0
 end)
 
 register_hook("movement_end", function()
@@ -399,18 +399,18 @@ register_hook("effect_once", function()
 end)
 
 register_hook("undoed_after", function()
-	CodexStateExport.last_command = "undo"
+	AgentStateExport.last_command = "undo"
 	safe_export("undoed_after")
 end)
 
 register_hook("level_restart", function()
-	CodexStateExport.last_command = "restart"
+	AgentStateExport.last_command = "restart"
 	safe_export("level_restart")
 end)
 
 register_hook("level_win_after", function()
-	CodexStateExport.last_command = "win"
+	AgentStateExport.last_command = "win"
 	safe_export("level_win_after")
 end)
 
-print("Codex state exporter active: save/codex_state")
+print("Agent state exporter active: save/agent_state")

@@ -20,6 +20,7 @@ import heapq
 import itertools
 import subprocess
 import sys
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +81,7 @@ class SearchConfig:
     pattern_margin: int
     target_start: Coord | None
     target_dir: str
+    deadline: float | None
 
 
 @dataclass(frozen=True)
@@ -114,6 +116,52 @@ def compress_moves(route: list[str]) -> str:
         else:
             parts.append([move, 1])
     return ",".join(f"{move}*{count}" if count != 1 else str(move) for move, count in parts)
+
+
+def text_unit_display(unit: TextUnit, coord: Coord | None = None) -> str:
+    index = unit.label.split("#")[-1]
+    shown_coord = unit.coord if coord is None else coord
+    return f"text_{unit.word}#{index}:{unit.word}@{shown_coord}"
+
+
+def parse_goal_parts(parts: list[str] | None, *, flag: str, expected: int) -> tuple[str, ...] | None:
+    if parts is None:
+        return None
+    raw_parts = parts
+    if len(raw_parts) == 1:
+        raw_parts = raw_parts[0].split()
+    normalized = tuple(part.lower() for part in raw_parts)
+    if len(normalized) != expected:
+        shape = "SUBJECT is PROPERTY" if expected == 3 else "SUBJECT is"
+        example = "flag is win" if expected == 3 else "star is"
+        raise SystemExit(
+            f"{flag} must be shaped like: {shape}. "
+            f"Both `{flag} {example}` and `{flag} \"{example}\"` are accepted."
+        )
+    return normalized
+
+
+def live_state_hint(save_dir: Path, live_state_path: Path | None, level: LevelData) -> str | None:
+    try:
+        state = load_state(live_state_path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
+    except Exception:
+        return None
+    meta = state.get("meta", {})
+    turn = meta.get("turn")
+    try:
+        turn_value = int(turn)
+    except (TypeError, ValueError):
+        return None
+    if turn_value <= 0:
+        return None
+    live_world = str(meta.get("world") or "<unknown>")
+    live_level = str(meta.get("level") or "<unknown>")
+    if live_world != level.world or live_level != level.level:
+        return None
+    return (
+        f"live_state_hint=live export is already turn={turn_value} for {live_world}/{live_level}; "
+        "initial-level search ignores earlier moves, so use --from-live-state when solving from the current mutated board."
+    )
 
 
 def rule_coords(direction: str, start: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
@@ -176,7 +224,7 @@ def rules_from_text_positions(positions: dict[str, list[tuple[int, int, int]]]) 
     return rules
 
 
-def load_live_level(save_dir: Path, live_state_path: Path) -> LevelData:
+def load_live_level(save_dir: Path, live_state_path: Path | None) -> LevelData:
     state = load_state(live_state_path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
     meta = state.get("meta", {})
     positions: dict[str, list[tuple[int, int, int]]] = defaultdict(list)
@@ -401,7 +449,7 @@ def rule_mobility_lines(level: LevelData) -> list[str]:
                 f"{option.move}{'*' if option.preserves_you else '!'}"
                 for option in options
             )
-            option_bits.append(f"{unit.word}#{unit.label.split('#')[-1]}@{unit.coord}:{moves}")
+            option_bits.append(f"{text_unit_display(unit)}:{moves}")
         status = "fixed" if not option_bits else "pushable"
         lines.append(
             f"  {direction} {start_coord}: {first} is {last} -> {status}"
@@ -858,6 +906,12 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
     seen = 0
 
     while queue and seen < problem.config.max_states:
+        if problem.config.deadline is not None and time.monotonic() >= problem.config.deadline:
+            raise SystemExit(
+                f"Search timed out after {seen} states. "
+                "Narrow with --target-start/--target-dir, --select-text-at, "
+                "or --pattern-margin 0/1; do not just increase shell timeout."
+            )
         _priority, route_cost, _count, state = heapq.heappop(queue)
         if route_cost != cost[state]:
             continue
@@ -942,7 +996,7 @@ def print_analysis(problem: SearchProblem) -> None:
         print(f"goal_prefix={problem.config.goal_subject} is")
     else:
         print(f"goal={problem.config.goal_subject} is {problem.config.goal_property}")
-    print("selected_text=" + ", ".join(f"{unit.label}:{unit.word}@{unit.coord}" for unit in problem.selected))
+    print("selected_text=" + ", ".join(text_unit_display(unit) for unit in problem.selected))
     print(f"fixed_text_count={len(problem.fixed)}")
     print(f"target_patterns={len(problem.target_patterns)}")
     print(f"target_assignments={len(problem.target_assignments)}")
@@ -957,7 +1011,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--game-root", type=Path, help="Override configured Worlds directory")
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
-    parser.add_argument("--state-path", type=Path, help="Override legacy JSON state path for --from-live-state")
+    parser.add_argument("--state-path", type=Path, help="Override JSON state path for --from-live-state")
     parser.add_argument("--world", help="World folder. Defaults to current save world.")
     parser.add_argument("--level", help="Level id. Defaults to current save level.")
     parser.add_argument(
@@ -967,16 +1021,16 @@ def main() -> int:
     )
     parser.add_argument(
         "--make-rule",
-        nargs=3,
-        metavar=("SUBJECT", "IS", "PROPERTY"),
+        nargs="+",
+        metavar="RULE_PART",
         default=None,
-        help="Rule to build, e.g. --make-rule flag is win",
+        help='Rule to build, e.g. --make-rule flag is win or --make-rule "flag is win"',
     )
     parser.add_argument(
         "--make-prefix",
-        nargs=2,
-        metavar=("SUBJECT", "IS"),
-        help="Two-text prefix to build or preserve, e.g. --make-prefix star is",
+        nargs="+",
+        metavar="PREFIX_PART",
+        help='Two-text prefix to build or preserve, e.g. --make-prefix star is or --make-prefix "star is"',
     )
     parser.add_argument(
         "--select-text",
@@ -996,6 +1050,23 @@ def main() -> int:
     parser.add_argument("--allow-break-you", action="store_true", help="Do not require the initial YOU rule to stay active")
     parser.add_argument("--no-touch-win", action="store_true", help="Stop after building the requested rule")
     parser.add_argument("--max-states", type=int, default=250_000)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=20.0,
+        help="Wall-clock seconds for search. Use 0 to disable. Default 20.",
+    )
+    parser.add_argument(
+        "--max-target-assignments",
+        type=int,
+        default=50_000,
+        help="Fail fast when derived target assignments exceed this count. Default 50000.",
+    )
+    parser.add_argument(
+        "--allow-huge-search",
+        action="store_true",
+        help="Allow search even when target assignments exceed --max-target-assignments.",
+    )
     parser.add_argument(
         "--heuristic-weight",
         type=int,
@@ -1031,10 +1102,13 @@ def main() -> int:
     if args.make_prefix and args.make_rule:
         raise SystemExit("Use either --make-prefix or --make-rule, not both")
     if args.make_prefix:
-        subject, middle = (part.lower() for part in args.make_prefix)
+        prefix_parts = parse_goal_parts(args.make_prefix, flag="--make-prefix", expected=2)
+        assert prefix_parts is not None
+        subject, middle = prefix_parts
         prop = None
     else:
-        subject, middle, prop = (part.lower() for part in (args.make_rule or ("flag", "is", "win")))
+        rule_parts = parse_goal_parts(args.make_rule, flag="--make-rule", expected=3)
+        subject, middle, prop = rule_parts or ("flag", "is", "win")
     if middle != "is":
         raise SystemExit("Goal must be shaped like: SUBJECT is [PROPERTY]")
 
@@ -1061,6 +1135,7 @@ def main() -> int:
         level = load_live_level(save_dir, state_path(save_dir, args.state_path))
     else:
         level = load_level(game_root, save_dir, args.world, args.level)
+    source_hint = live_state_hint(save_dir, state_path(save_dir, args.state_path), level) if not args.from_live_state else None
     search_config = SearchConfig(
         goal_subject=subject,
         goal_property=prop,
@@ -1071,6 +1146,7 @@ def main() -> int:
         pattern_margin=args.pattern_margin,
         target_start=parse_coord(args.target_start, "--target-start") if args.target_start else None,
         target_dir=args.target_dir,
+        deadline=(time.monotonic() + args.timeout) if args.timeout and args.timeout > 0 else None,
     )
     problem = build_problem(
         level,
@@ -1079,10 +1155,22 @@ def main() -> int:
         selected_text_at=selected_text_at,
         all_is=args.all_is,
     )
+    print(f"state_source={'live_export' if args.from_live_state else 'initial_level_file'}")
     print_analysis(problem)
+    if source_hint:
+        print(source_hint)
+    sys.stdout.flush()
 
     if args.analyze:
         return 0
+    if len(problem.target_assignments) > args.max_target_assignments and not args.allow_huge_search:
+        raise SystemExit(
+            f"Search too broad before expansion: target_assignments={len(problem.target_assignments)} "
+            f"> max_target_assignments={args.max_target_assignments}. "
+            "Run with --analyze first, then narrow with --target-start/--target-dir, "
+            "--select-text-at WORD@X,Y, or --pattern-margin 0/1. "
+            "Use --allow-huge-search only when intentionally running a slow search."
+        )
 
     route, seen, final_state = solve(problem)
     compact = compress_moves(route)
@@ -1093,7 +1181,7 @@ def main() -> int:
     print(f"final_actor={actor}")
     print(
         "final_selected_text="
-        + ", ".join(f"{unit.label}:{coord}" for unit, coord in zip(problem.selected, boxes))
+        + ", ".join(text_unit_display(unit, coord) for unit, coord in zip(problem.selected, boxes))
     )
     print(f"command=python3 scripts/baba_send_keys.py '{compact}' --delay {delay}")
 

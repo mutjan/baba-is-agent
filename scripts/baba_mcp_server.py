@@ -89,7 +89,7 @@ TOOLS: dict[str, dict[str, Any]] = {
             **COMMON_CONFIG,
             "run_id": {
                 "type": "string",
-                "description": "Run directory name, e.g. 001_codex_gpt55 or 002_claude_sonnet.",
+                "description": "Run directory name, e.g. 001_agent_model or 002_claude_sonnet.",
             },
         },
         required=["run_id"],
@@ -114,7 +114,7 @@ TOOLS: dict[str, dict[str, Any]] = {
         properties={
             **COMMON_CONFIG,
             "save_dir": {"type": "string", "description": "Optional save directory override."},
-            "state_path": {"type": "string", "description": "Optional legacy JSON state path override."},
+            "state_path": {"type": "string", "description": "Optional JSON state path override."},
             "state_limit": {"type": "integer", "description": "Limit printed state rule/object groups."},
             "rules_only": {
                 "type": "boolean",
@@ -135,7 +135,7 @@ TOOLS: dict[str, dict[str, Any]] = {
         properties={
             **COMMON_CONFIG,
             "save_dir": {"type": "string", "description": "Optional save directory override."},
-            "path": {"type": "string", "description": "Optional legacy JSON state path override."},
+            "path": {"type": "string", "description": "Optional JSON state path override."},
             "raw_json": {"type": "boolean", "description": "Return raw state JSON instead of a compact summary."},
             "wait": {"type": "boolean", "description": "Wait for state to exist or change."},
             "timeout": {"type": "number", "description": "Seconds to wait with wait=true."},
@@ -178,7 +178,9 @@ TOOLS: dict[str, dict[str, Any]] = {
     "check_moves": tool_schema(
         description=(
             "Send a short move segment and fail unless the named expected delta occurs. "
-            "Use this to validate hypotheses with the script, not hidden reasoning."
+            "Use this to validate hypotheses with the script, not hidden reasoning. "
+            "Contradictory rule expectations fail before input; completion 3 requires an active or newly expected WIN rule. "
+            "After check=fail, reread state before undo; multi-step undo can erase earlier progress."
         ),
         properties={
             **COMMON_CONFIG,
@@ -193,24 +195,60 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "items": {"type": "string"},
                 "description": "Rules expected to be broken.",
             },
+            "expect_rule_kept": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Rules expected to be active before and still active after the move segment, e.g. wall is you.",
+            },
+            "expect_rule_present": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Rules expected to be active after the move segment.",
+            },
+            "forbid_rule_added": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Fail if any of these rules are newly formed.",
+            },
+            "forbid_rule_removed": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Fail if any of these rules are broken.",
+            },
+            "forbid_rule_present": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Fail if any of these rules are active after the move segment.",
+            },
             "expect_moved": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Unit/text names expected to move, e.g. text_is.",
+                "description": "Weak unit/text movement check. Multi-step or text pushes should use expect_moved_delta or expect_position instead.",
+            },
+            "expect_moved_delta": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Unit/text expected to move in a net direction, e.g. text_rock:-x, rock:right, baba:up.",
+            },
+            "expect_position": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Unit/text expected to end at a coordinate in compact UNIT@X,Y form, e.g. baba@7,4.",
             },
             "expect_appeared": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Unit/text names expected to appear.",
+                "description": "Unit/text names expected to appear. Use text_ for word tiles; flag and text_flag are distinct.",
             },
             "expect_disappeared": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Unit/text names expected to disappear.",
+                "description": "Unit/text names expected to disappear. Use text_ for word tiles; flag and text_flag are distinct.",
             },
-            "expect_completion": {"type": "boolean", "description": "Expect completion status 3."},
-            "expect_completion_status": {"type": "integer", "description": "Expect a specific completion status."},
+            "expect_completion": {"type": "boolean", "description": "Expect completion status 3; requires active WIN or expect_rule_added X is win."},
+            "expect_completion_status": {"type": "integer", "description": "Expect a specific completion status; status 3 requires active WIN or expect_rule_added X is win."},
             "allow_no_expectation": {"type": "boolean", "description": "Permit running without expected delta."},
+            "allow_weak_move": {"type": "boolean", "description": "Permit weak expect_moved-only checks for one-off debugging."},
             "max_moves": {"type": "integer", "description": "Maximum expanded moves without allow_long. Default 8."},
             "allow_long": {"type": "boolean", "description": "Allow action segments longer than max_moves."},
             "dry_run": {"type": "boolean", "description": "Print planned action without moving."},
@@ -226,6 +264,30 @@ TOOLS: dict[str, dict[str, Any]] = {
             "limit": {"type": "integer", "description": "Limit printed changed units per category."},
         },
         required=["moves"],
+    ),
+    "undo_moves": tool_schema(
+        description=(
+            "Undo recent turns with z and observe the resulting state delta. "
+            "Default to one step; multi-step undo is blocked unless allow_multi_step is explicit."
+        ),
+        properties={
+            **COMMON_CONFIG,
+            "steps": {"type": "integer", "description": "Number of z undo presses. Default 1; avoid failed expanded_move_count."},
+            "allow_multi_step": {
+                "type": "boolean",
+                "description": "Permit steps > 1 for explicit manual rollback/debugging.",
+            },
+            "dry_run": {"type": "boolean", "description": "Print command without sending keys."},
+            "app_name": {"type": "string", "description": "Optional macOS app name override."},
+            "timeout": {"type": "number", "description": "Seconds to wait for observed state refreshes."},
+            "delay": {"type": "number", "description": "Delay after each key press."},
+            "hold_ms": {"type": "integer", "description": "Milliseconds to hold each key."},
+            "method": {"type": "string", "enum": ["cgevent", "applescript"]},
+            "no_activate": {"type": "boolean", "description": "Do not activate Baba before sending."},
+            "pre_delay": {"type": "number", "description": "Delay after activating Baba."},
+            "focus": {"type": "string", "description": "Comma-separated unit names to show."},
+            "limit": {"type": "integer", "description": "Limit printed changed units per category."},
+        },
     ),
     "restart_level": tool_schema(
         description="Restart the current level or map position using scripts/baba_restart.py.",
@@ -249,7 +311,10 @@ TOOLS: dict[str, dict[str, Any]] = {
         },
     ),
     "navigate_next": tool_schema(
-        description="Execute map_route, then read_state --wait and parse_rules in one call.",
+        description=(
+            "MCP-only helper: execute map_route, then read_state --wait and parse_rules in one call. "
+            "Script fallback is python3 scripts/baba_map_route.py --execute; there is no scripts/baba_navigate_next.py."
+        ),
         properties={
             **COMMON_CONFIG,
             "target": {"type": "string", "description": "Optional target level id, e.g. 1level."},
@@ -558,12 +623,20 @@ def check_moves(args: dict[str, Any]) -> tuple[str, bool]:
     command: list[str] = [moves]
     add_repeat(command, args, "expect_rule_added", "--expect-rule-added")
     add_repeat(command, args, "expect_rule_removed", "--expect-rule-removed")
+    add_repeat(command, args, "expect_rule_kept", "--expect-rule-kept")
+    add_repeat(command, args, "expect_rule_present", "--expect-rule-present")
+    add_repeat(command, args, "forbid_rule_added", "--forbid-rule-added")
+    add_repeat(command, args, "forbid_rule_removed", "--forbid-rule-removed")
+    add_repeat(command, args, "forbid_rule_present", "--forbid-rule-present")
     add_repeat(command, args, "expect_moved", "--expect-moved")
+    add_repeat(command, args, "expect_moved_delta", "--expect-moved-delta")
+    add_repeat(command, args, "expect_position", "--expect-position-at")
     add_repeat(command, args, "expect_appeared", "--expect-appeared")
     add_repeat(command, args, "expect_disappeared", "--expect-disappeared")
     add_bool(command, args, "expect_completion", "--expect-completion")
     add_value(command, args, "expect_completion_status", "--expect-completion-status")
     add_bool(command, args, "allow_no_expectation", "--allow-no-expectation")
+    add_bool(command, args, "allow_weak_move", "--allow-weak-move")
     add_value(command, args, "max_moves", "--max-moves")
     add_bool(command, args, "allow_long", "--allow-long")
     add_bool(command, args, "dry_run", "--dry-run")
@@ -580,6 +653,24 @@ def check_moves(args: dict[str, Any]) -> tuple[str, bool]:
     add_value(command, args, "focus", "--focus")
     add_value(command, args, "limit", "--limit")
     return run_script("baba_action_check.py", command, args)
+
+
+def undo_moves(args: dict[str, Any]) -> tuple[str, bool]:
+    command: list[str] = []
+    add_value(command, args, "steps", "--steps")
+    add_bool(command, args, "allow_multi_step", "--allow-multi-step")
+    add_bool(command, args, "dry_run", "--dry-run")
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "app_name", "--app-name")
+    add_value(command, args, "timeout", "--timeout")
+    add_value(command, args, "delay", "--delay")
+    add_value(command, args, "hold_ms", "--hold-ms")
+    add_value(command, args, "method", "--method")
+    add_bool(command, args, "no_activate", "--no-activate")
+    add_value(command, args, "pre_delay", "--pre-delay")
+    add_value(command, args, "focus", "--focus")
+    add_value(command, args, "limit", "--limit")
+    return run_script("baba_undo.py", command, args)
 
 
 def restart_level(args: dict[str, Any]) -> tuple[str, bool]:
@@ -706,6 +797,7 @@ TOOL_HANDLERS = {
     "parse_rules": parse_rules,
     "try_moves": try_moves,
     "check_moves": check_moves,
+    "undo_moves": undo_moves,
     "restart_level": restart_level,
     "return_to_map": return_to_map,
     "navigate_next": navigate_next,

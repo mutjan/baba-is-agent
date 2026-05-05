@@ -9,6 +9,7 @@ wrapper uses the local CoreGraphics helper, which posts HID-level key events.
 from __future__ import annotations
 
 import argparse
+import shlex
 import subprocess
 import sys
 import time
@@ -131,6 +132,42 @@ def frontmost_process() -> str:
     return result.stdout.strip()
 
 
+def observe_command(args: argparse.Namespace) -> tuple[list[str], list[str]]:
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "baba_try.py"
+    command = [sys.executable, str(script), args.moves]
+    display = ["python3", "scripts/baba_try.py", args.moves]
+
+    if args.config:
+        command.extend(["--config", str(args.config)])
+        display.extend(["--config", str(args.config)])
+    if args.app_name:
+        command.extend(["--app-name", args.app_name])
+        display.extend(["--app-name", args.app_name])
+    if args.observe_timeout is not None:
+        command.extend(["--timeout", str(args.observe_timeout)])
+        display.extend(["--timeout", str(args.observe_timeout)])
+    if args.delay is not None:
+        command.extend(["--delay", str(args.delay)])
+        display.extend(["--delay", str(args.delay)])
+    command.extend(["--hold-ms", str(args.hold_ms)])
+    display.extend(["--hold-ms", str(args.hold_ms)])
+    command.extend(["--method", args.method])
+    display.extend(["--method", args.method])
+    if args.no_activate:
+        command.append("--no-activate")
+        display.append("--no-activate")
+    command.extend(["--pre-delay", str(args.pre_delay)])
+    display.extend(["--pre-delay", str(args.pre_delay)])
+    if args.focus:
+        command.extend(["--focus", args.focus])
+        display.extend(["--focus", args.focus])
+    if args.limit is not None:
+        command.extend(["--limit", str(args.limit)])
+        display.extend(["--limit", str(args.limit)])
+    return command, display
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -168,10 +205,34 @@ def main() -> int:
     )
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--app-name", help="Override configured macOS app name")
+    parser.add_argument(
+        "--observe",
+        action="store_true",
+        help="Delegate to baba_try.py so the real key input is followed by a state delta",
+    )
+    parser.add_argument(
+        "--observe-timeout",
+        type=float,
+        default=3.0,
+        help="Seconds baba_try.py waits for state refreshes when --observe is used",
+    )
+    parser.add_argument(
+        "--focus",
+        help="With --observe, comma-separated unit names to show in the delta, such as baba,text_is,flag",
+    )
+    parser.add_argument("--limit", type=int, default=20, help="With --observe, limit changed units per category")
     args = parser.parse_args()
 
     moves = parse_moves(args.moves)
     print("moves=" + ",".join(moves))
+
+    if args.observe:
+        command, display = observe_command(args)
+        print("observe=delegate_to_baba_try")
+        print("command=" + shlex.join(display))
+        if args.dry_run:
+            return 0
+        return subprocess.run(command, cwd=Path(__file__).resolve().parents[1], check=False).returncode
 
     if args.dry_run:
         return 0

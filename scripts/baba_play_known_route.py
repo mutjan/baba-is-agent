@@ -38,7 +38,7 @@ def load_routes(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise SystemExit(f"Known route file does not exist: {path}")
     doc = json.loads(path.read_text(encoding="utf-8"))
-    if doc.get("schema") != "codex-baba-known-routes-v1" or not isinstance(doc.get("routes"), dict):
+    if doc.get("schema") != "baba-agent-known-routes-v1" or not isinstance(doc.get("routes"), dict):
         raise SystemExit(f"Unsupported known route file: {path}")
     return doc
 

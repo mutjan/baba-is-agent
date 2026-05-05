@@ -15,8 +15,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "baba_config.json"
 EXAMPLE_CONFIG_PATH = PROJECT_ROOT / "baba_config.example.json"
-STATE_EXPORTER_TARGET_NAME = "codex_state_export.lua"
-STATE_EXPORTER_MARKER = "codex-baba-state-export-v1"
+STATE_EXPORTER_TARGET_NAME = "agent_state_export.lua"
+STATE_EXPORTER_MARKER = "baba-agent-state-export-v1"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "game_root": (

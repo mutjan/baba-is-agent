@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from baba_config import load_config
-from parse_baba_level import read_ini_like
-from read_baba_state import current_save_file, load_save_state
+from parse_baba_level import current_level, read_ini_like
+from read_baba_state import current_save_file, load_agent_state
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,10 +106,12 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
     config = load_config(config_path)
     save_dir = save_dir_override or config.save_dir
     save_file = current_save_file(save_dir)
-    state = load_save_state(save_file) if save_file.exists() else None
+    state = load_agent_state(save_file) if save_file.exists() else None
     meta = (state or {}).get("meta", {})
-    world = meta.get("world")
-    level = meta.get("level")
+    _slot, previous_world, previous_level = current_level(save_dir)
+    runtime_state_available = state is not None
+    world = meta.get("world") or previous_world
+    level = meta.get("level") or previous_level
     name = meta.get("level_name")
     status = completion_status(save_dir, world, level)
     context = classify_context(state)
@@ -124,6 +126,7 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
         "world": world,
         "level": level,
         "name": name,
+        "runtime_state_available": runtime_state_available,
         "completion_status": status,
         "current_run_id": config.current_run_id or "",
         "active_attempt": str(active_path) if active_path else "",
@@ -131,12 +134,20 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
         "active_completion_status": active_status,
     }
 
-    if context == "map":
+    if not runtime_state_available:
+        payload.update(
+            {
+                "next_mcp_tool": "app_status",
+                "next_script": "python3 scripts/baba_app_status.py",
+                "reason": "No fresh agent_state runtime snapshot is available. Restart Baba Is You or trigger a level reload, then inspect state before solving.",
+            }
+        )
+    elif context == "map":
         payload.update(
             {
                 "next_mcp_tool": "navigate_next",
                 "next_script": "python3 scripts/baba_map_route.py --execute",
-                "reason": "Current state is a map/sub-map controlled by cursor is select; do not solve or score it as a normal level.",
+                "reason": "Current state is a map/sub-map controlled by cursor is select; do not solve or score it as a normal level. navigate_next is MCP-only; do not invent scripts/baba_navigate_next.py.",
             }
         )
         payload.update(route_hint(config_path, save_dir))
@@ -168,7 +179,7 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
         payload.update(
             {
                 "next_mcp_tool": "check_moves",
-                "next_script": "python3 scripts/baba_action_check.py '<short move segment>' --expect-moved '<unit-or-text>'",
+                "next_script": "python3 scripts/baba_action_check.py '<short move segment>' --expect-moved-delta '<unit-or-text>:<dir>'",
                 "reason": "A benchmark attempt is active for this run; name one expected observable delta and let the script validate it.",
             }
         )

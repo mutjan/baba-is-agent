@@ -22,6 +22,7 @@ from read_baba_state import load_state
 
 META_SUBJECTS = {"cursor", "level", "text"}
 HAZARD_PROPERTIES = {"defeat", "sink", "hot", "melt"}
+Coord = tuple[int, int]
 
 
 @dataclass
@@ -45,18 +46,28 @@ def rule_text(subject: str, prop: str) -> str:
     return f"{subject} is {prop}"
 
 
-def search_command(subject: str, prop: str) -> str:
+def turn_int(meta: dict[str, Any]) -> int:
+    try:
+        return int(meta.get("turn") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def search_command(subject: str, prop: str, *, from_live_state: bool) -> str:
+    live_flag = "--from-live-state " if from_live_state else ""
     return (
         "python3 scripts/baba_search_route.py "
+        f"{live_flag}"
         f"--make-rule {subject} is {prop} "
-        f"--select-text {subject} --select-text {prop} --all-is --no-touch-win"
+        f"--select-text {subject} --select-text {prop} --all-is --no-touch-win "
+        "--timeout 20 --max-target-assignments 50000"
     )
 
 
 def load_current_state(args: argparse.Namespace) -> dict[str, Any]:
     config = load_config(args.config)
     save_dir = args.save_dir or config.save_dir
-    path = args.path.expanduser().resolve() if args.path else (save_dir / "codex_state.json").resolve()
+    path = args.path.expanduser().resolve() if args.path else None
     return load_state(
         path,
         wait=args.wait,
@@ -64,6 +75,13 @@ def load_current_state(args: argparse.Namespace) -> dict[str, Any]:
         since_mtime=None,
         save_dir=save_dir,
     )
+
+
+def int_value(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def text_word(unit: dict[str, Any]) -> str:
@@ -84,10 +102,11 @@ def add_candidate(
     risks: list[str] | None = None,
     active_rules: set[tuple[str, str]],
     text_words: set[str],
+    from_live_state: bool,
 ) -> None:
     missing = [(subject, prop) for subject, prop in rules if (subject, prop) not in active_rules]
     commands = [
-        search_command(subject, prop)
+        search_command(subject, prop, from_live_state=from_live_state)
         for subject, prop in missing
         if subject in text_words and prop in text_words and "is" in text_words
     ]
@@ -123,6 +142,7 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
     active_rules: set[tuple[str, str]] = set()
     visible_rules: set[tuple[str, str]] = set()
     props_by_subject: dict[str, set[str]] = collections.defaultdict(set)
+    text_positions: dict[str, list[Coord]] = collections.defaultdict(list)
     for rule in rules:
         subject = norm(rule.get("target"))
         prop = norm(rule.get("effect"))
@@ -133,15 +153,55 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
         if rule.get("visible"):
             visible_rules.add((subject, prop))
 
+    for unit in units:
+        if unit.get("dead") or unit.get("unit_type") != "text":
+            continue
+        word = text_word(unit)
+        x = int_value(unit.get("x"))
+        y = int_value(unit.get("y"))
+        if word and x is not None and y is not None:
+            text_positions[word].append((x, y))
+
     return {
         "meta": state.get("meta", {}),
         "objects": objects,
         "text_counts": text_counts,
+        "text_positions": {word: sorted(coords) for word, coords in text_positions.items()},
         "text_words": set(text_counts),
         "active_rules": active_rules,
         "visible_rules": visible_rules,
         "props_by_subject": props_by_subject,
     }
+
+
+def edge_text_warnings(summary: dict[str, Any]) -> list[str]:
+    meta = summary["meta"]
+    width = int_value(meta.get("room_width"))
+    height = int_value(meta.get("room_height"))
+    if width is None or height is None:
+        return []
+    min_x = 1
+    min_y = 1
+    max_x = width - 2
+    max_y = height - 2
+    warnings: list[str] = []
+    for word, coords in sorted(summary["text_positions"].items()):
+        for x, y in coords:
+            at_left = x == min_x
+            at_right = x == max_x
+            at_top = y == min_y
+            at_bottom = y == max_y
+            if not (at_left or at_right or at_top or at_bottom):
+                continue
+            locks: list[str] = []
+            if at_left or at_right:
+                locks.append("horizontal_locked")
+            if at_top or at_bottom:
+                locks.append("vertical_locked")
+            if (at_left or at_right) and (at_top or at_bottom):
+                locks.append("corner_locked")
+            warnings.append(f"text_{word}@({x},{y}):{','.join(locks)}")
+    return warnings
 
 
 def score_open_shut_pair(
@@ -199,6 +259,7 @@ def build_candidates(summary: dict[str, Any]) -> list[Candidate]:
     active_rules: set[tuple[str, str]] = summary["active_rules"]
     visible_rules: set[tuple[str, str]] = summary["visible_rules"]
     props_by_subject: dict[str, set[str]] = summary["props_by_subject"]
+    from_live_state = turn_int(summary["meta"]) > 0
     candidates: list[Candidate] = []
 
     stop_subjects = sorted(
@@ -246,6 +307,7 @@ def build_candidates(summary: dict[str, Any]) -> list[Candidate]:
                 risks=risks,
                 active_rules=active_rules,
                 text_words=text_words,
+                from_live_state=from_live_state,
             )
 
     for subject in sorted(set(you_subjects) | set(push_subjects) | set(objects)):
@@ -273,6 +335,7 @@ def build_candidates(summary: dict[str, Any]) -> list[Candidate]:
             risks=risks,
             active_rules=active_rules,
             text_words=text_words,
+            from_live_state=from_live_state,
         )
 
     for subject in sorted(set(objects) | set(text_words)):
@@ -296,14 +359,35 @@ def build_candidates(summary: dict[str, Any]) -> list[Candidate]:
             risks=risks,
             active_rules=active_rules,
             text_words=text_words,
+            from_live_state=from_live_state,
         )
 
+    win_subjects = sorted(
+        subject
+        for subject, props in props_by_subject.items()
+        if "win" in props and subject not in META_SUBJECTS
+    )
     for subject, prop in sorted(visible_rules):
-        if subject in META_SUBJECTS or prop != "stop":
+        if subject in META_SUBJECTS or prop not in {"stop"} | HAZARD_PROPERTIES:
             continue
         score = 36
         reasons = [f"breaking visible {rule_text(subject, prop)} may open movement"]
-        risks = ["verify immediately; removing STOP can also change puzzle assumptions"]
+        risks = ["verify immediately; removing a blocker/hazard can also change puzzle assumptions"]
+        if prop in HAZARD_PROPERTIES:
+            score += 34
+            reasons.append(f"{subject} objects stop being {prop} after the rule is broken")
+            if win_subjects:
+                score += 22
+                reasons.append(
+                    "existing WIN rule already present: "
+                    + "; ".join(rule_text(win_subject, "win") for win_subject in win_subjects)
+                )
+                risks.append("after breaking the hazard, immediately test a route to the existing WIN object")
+            if subject in objects:
+                score += 6
+                reasons.append(f"{subject} objects are present on the map")
+        elif prop == "stop":
+            risks.append("removing STOP can open movement but may also remove useful structure")
         add_candidate(
             candidates,
             score=score,
@@ -313,6 +397,7 @@ def build_candidates(summary: dict[str, Any]) -> list[Candidate]:
             risks=risks,
             active_rules=active_rules,
             text_words=text_words,
+            from_live_state=from_live_state,
         )
 
     unique: dict[tuple[str, tuple[tuple[str, str], ...]], Candidate] = {}
@@ -333,6 +418,18 @@ def as_json(summary: dict[str, Any], candidates: list[Candidate], top: int) -> s
             "name": meta.get("level_name"),
             "turn": meta.get("turn"),
         },
+        "post_hypothesis_protocol": {
+            "max_analyze_runs": 1,
+            "required_next_action": "choose one 1-8 step baba_action_check.py segment with explicit --expect-*; use 1-3 steps for text/rule pushes",
+            "forbidden": "do not write more than 5 lines of rule-arrangement reasoning after hypotheses/analyze output",
+            "push_chain_rule": "chain pushes require free space after the far end; corner/edge/pocket pushes are high-risk and must be verified with short action_check segments",
+            "search_state": (
+                "current turn > 0, so search_next commands include --from-live-state"
+                if turn_int(meta) > 0
+                else "current turn is 0/unknown, so search_next commands use the initial level file"
+            ),
+        },
+        "edge_text_warnings": edge_text_warnings(summary),
         "signals": {
             "you": sorted(
                 subject for subject, props in summary["props_by_subject"].items() if "you" in props
@@ -376,11 +473,21 @@ def print_human(summary: dict[str, Any], candidates: list[Candidate], top: int) 
         f"name={meta.get('level_name') or '<unknown>'} "
         f"turn={meta.get('turn')}"
     )
+    if turn_int(meta) > 0:
+        print("search_state=current live board has already changed; search_next includes --from-live-state")
     print("signals:")
     for prop in ("you", "push", "open", "shut", "stop", "defeat", "win"):
         subjects = sorted(subject for subject, props in props_by_subject.items() if prop in props)
         if subjects:
             print(f"  {prop}: {', '.join(subjects)}")
+    edge_warnings = edge_text_warnings(summary)
+    if edge_warnings:
+        print("edge_text_warnings:")
+        for warning in edge_warnings[:10]:
+            print(f"  {warning}")
+        if len(edge_warnings) > 10:
+            print(f"  ... {len(edge_warnings) - 10} more")
+        print("edge_rule=locked-axis text cannot be pushed off that axis; build around it or move other words instead of planning a blocked push")
     print()
     print("hypotheses:")
     if not candidates:
@@ -397,14 +504,23 @@ def print_human(summary: dict[str, Any], candidates: list[Candidate], top: int) 
             print("   search_next:")
             for command in item.commands:
                 print(f"     {command}")
-        print("   verify=after any route, run baba_action_check.py with --expect-rule-added or --expect-moved")
+            print("   search_rule=run at most one --analyze if the text layout is unclear; then immediately choose one 1-8 step baba_action_check.py segment with explicit --expect-*; use 1-3 steps for text/rule pushes")
+            print("   narrow_rule=if --analyze is too broad, add --target-start/--target-dir or --select-text-at before any larger search")
+        print("   push_safety=before pushing text/object, check the whole chain and the far-end cell; avoid corners, edges, STOP/DEFEAT, and one-cell pockets unless the next action_check proves it is safe")
+        print("   verify=after any route, run baba_action_check.py with --expect-rule-added, --expect-moved-delta, or --expect-position plus --expect-rule-kept for current YOU if control must remain")
+    print()
+    print("post_hypothesis_protocol=max_analyze_runs=1; next=choose one 1-8 step baba_action_check.py segment with explicit --expect-*; text/rule push next segment must be 1-3 steps")
+    if turn_int(meta) > 0:
+        print("post_hypothesis_search_rule=keep --from-live-state for route analysis/search until the level is restarted")
+    print("push_chain_rule=chain pushes require free space after the far end; corner/edge/pocket pushes are high-risk and should be verified by a short action_check, not prose")
+    print("forbidden_after_hypotheses=do not write more than 5 lines of rule-arrangement reasoning before the next action_check; do not continue prose after identifying a 1-3 step text/rule test")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="Path to baba_config.json")
     parser.add_argument("--save-dir", type=Path, help="Override configured save directory")
-    parser.add_argument("--path", type=Path, help="Override legacy JSON state path")
+    parser.add_argument("--path", type=Path, help="Override JSON state path")
     parser.add_argument("--wait", action="store_true", help="Wait for state to appear")
     parser.add_argument("--timeout", type=float, default=3.0)
     parser.add_argument("--top", type=int, default=8, help="Number of hypotheses to print")

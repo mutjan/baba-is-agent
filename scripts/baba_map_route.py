@@ -138,9 +138,8 @@ def coord_from_item(item: dict[str, str]) -> tuple[int, int] | None:
 
 
 def live_cursor_coord(save_dir: Path, map_level: str) -> tuple[int, int] | None:
-    path = (save_dir / "codex_state.json").resolve()
     try:
-        state = load_state(path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
+        state = load_state(None, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
     except (OSError, SystemExit, ValueError):
         return None
 
