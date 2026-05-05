@@ -1,6 +1,6 @@
 # Baba Agent Contract
 
-根据第一性原理，本项目的目标不是复现已有路线，而是让 agent 从当前真实状态出发，交互式学习并通关 Baba Is You 关卡，同时留下可验证的 benchmark 记录。
+本项目的目标不是复现已有路线，而是让 agent 从当前真实状态出发，交互式学习并通关 Baba Is You 关卡，同时留下可验证的 benchmark 记录。
 
 ## 目标与成功标准
 

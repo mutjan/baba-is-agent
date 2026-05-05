@@ -14,6 +14,8 @@ This project gives an agent two local capabilities:
 
 - read Baba Is You save files, level files, and optional live runtime state;
 - send macOS keyboard input to the running Baba Is You app.
+- optionally echo an agent response while a detached helper asks Xiaomi MiMo TTS
+  to synthesize and play the same text.
 
 The tools do not edit save files to win levels.
 
@@ -29,6 +31,8 @@ read `AGENTS.md` after installation.
 - macOS Accessibility permission for the app running these scripts, such as an
   agent app or Terminal.
 - Baba Is You should be running before sending keys.
+- Optional response TTS: a Xiaomi MiMo API key in `MIMO_API_KEY`; macOS `afplay`
+  is used by default for local playback.
 
 On macOS, the app/bundle name is usually `Baba Is You`, but the live process can
 appear as the engine name `Chowdren`. Do not use `processes contains "Baba Is
@@ -111,6 +115,56 @@ Set `current_run_id` to the current agent/model run folder, such as
 
 ```bash
 python3 scripts/baba_config.py --set-current-run-id 001_agent_model
+```
+
+## Response TTS Helper
+
+`scripts/agent_tts.py` is an optional helper for agents that should speak their
+written response. It uses Xiaomi MiMo-V2.5-TTS through the documented chat
+completions endpoint, putting the spoken text in the `assistant` message and any
+style instruction in the optional `user` message. MiMo's current streaming TTS
+path is documented as compatibility mode rather than low-latency audio, so the
+helper's practical "speak while replying" mode is `--background`: print the
+response immediately, then synthesize and play the audio in a detached process.
+
+The core script is intentionally agent-neutral. For environments such as
+OpenCode, Codex CLI, or other terminal agents, use the generic stdout adapter
+`scripts/agent_tts_tee.py` or a host-specific hook that calls `agent_tts.py`.
+See `docs/agent_tts_integration.md` for integration patterns and the OpenCode
+plugin example.
+
+Set the API key locally:
+
+```bash
+export MIMO_API_KEY=...
+```
+
+Dry-run without calling the network:
+
+```bash
+python3 scripts/agent_tts.py --dry-run "根据第一性原理，这是一段朗读测试。"
+```
+
+Echo the response immediately, then synthesize and play audio in the background:
+
+```bash
+python3 scripts/agent_tts.py --background --style "用清晰、冷静、简洁的中文助手语气朗读。" <<'EOF'
+根据第一性原理，当前最短反馈回路是先确认状态，再执行一个可验证的小动作。
+EOF
+```
+
+Useful options:
+
+- `--voice`: built-in voice ID such as `mimo_default`, `Mia`, or `Chloe`.
+- `--output path.wav --no-play`: save the synthesized WAV without playback.
+- `--background-log /path/to/log`: inspect detached TTS failures.
+- `MIMO_TTS_STYLE`, `MIMO_TTS_VOICE`, `MIMO_TTS_MODEL`, and `MIMO_BASE_URL`
+  override the matching defaults without changing command lines.
+
+Generic CLI adapter:
+
+```bash
+some-agent-command 2>agent.stderr | python3 scripts/agent_tts_tee.py
 ```
 
 ## MCP Server
@@ -216,6 +270,10 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   assigned agent.
 - `scripts/baba_config.py`: shared config loader, first-run config creation, and
   local game/exporter status detection.
+- `scripts/agent_tts.py`: optional Xiaomi MiMo TTS helper that echoes an agent
+  response, then synthesizes and plays it in the foreground or background.
+- `scripts/agent_tts_tee.py`: agent-agnostic stdout adapter that streams stdin
+  through to stdout, then speaks the collected response with `agent_tts.py`.
 - `scripts/install_baba_state_exporter.py`: installs or removes the Lua exporter.
 - `scripts/read_baba_state.py`: prints the latest exported runtime state from
   save `[agent_state]`; `--path` can read an explicit JSON snapshot. Human
@@ -309,6 +367,16 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   save-file writes.
 
 ## Changelog
+
+### 2026-05-05
+
+- Added `scripts/agent_tts.py` for optional spoken agent responses through
+  Xiaomi MiMo-V2.5-TTS. It keeps the repo dependency-free, reads
+  `MIMO_API_KEY` from the environment, supports dry-run validation, and can echo
+  text while a background process synthesizes and plays the audio.
+- Added `scripts/agent_tts_tee.py`, `docs/agent_tts_integration.md`, and an
+  OpenCode plugin example so TTS can be wired into CLI agents or host-specific
+  plugin systems instead of assuming Codex-only behavior.
 
 ### 2026-05-01
 
