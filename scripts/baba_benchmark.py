@@ -55,7 +55,6 @@ RUN_TEMPLATES = {
 SOLVING_NEXT_COMMANDS = (
     "python3 scripts/read_baba_state.py --limit 20 ; "
     "python3 scripts/baba_suggest_hypotheses.py --top 5 ; "
-    "python3 scripts/parse_baba_level.py --rules-only ; "
     "python3 scripts/baba_action_check.py '<short segment>' --expect-moved-delta '<unit-or-text>:<dir>'"
 )
 
@@ -187,6 +186,48 @@ def expand_moves(raw: str) -> list[str]:
         else:
             moves.append(token)
     return moves
+
+
+def parse_iso_z(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def moves_from_route_plan(path: Path, *, since: datetime | None, passed_only: bool) -> tuple[str, int, int]:
+    if not path.exists():
+        raise SystemExit(f"Route plan not found: {path}")
+    text = path.read_text(encoding="utf-8")
+    pattern = re.compile(
+        r"^## (?P<stamp>\S+) action_check\n\n(?P<body>.*?)(?=^## \S+ action_check\n\n|\Z)",
+        re.M | re.S,
+    )
+    moves: list[str] = []
+    block_count = 0
+    skipped_failed = 0
+    for match in pattern.finditer(text):
+        stamp = parse_iso_z(match.group("stamp"))
+        if since is not None and stamp is not None and stamp < since:
+            continue
+        body = match.group("body")
+        move_match = re.search(r"^- moves: `([^`]+)`", body, flags=re.M)
+        check_match = re.search(r"^- check: (\w+)", body, flags=re.M)
+        if not move_match:
+            continue
+        check = check_match.group(1).strip().lower() if check_match else ""
+        if passed_only and check != "pass":
+            skipped_failed += 1
+            continue
+        moves.append(move_match.group(1).strip())
+        block_count += 1
+    if not moves:
+        since_text = f" since {since.isoformat()}" if since else ""
+        mode = " passed" if passed_only else ""
+        raise SystemExit(f"No{mode} action_check moves found in {path}{since_text}")
+    return ",".join(moves), block_count, skipped_failed
 
 
 def ensure_run_files(run_dir: Path, files: dict[str, Path]) -> None:
@@ -405,8 +446,21 @@ def record_manual_pass(
     status = completion_status(save_dir, world, level)
     if status != 3 and not args.allow_without_status:
         raise SystemExit(f"{level} is not complete yet: status={status}")
+    route_plan_blocks = None
+    route_plan_skipped_failed = None
+    if args.from_route_plan:
+        since = parse_iso_z(active.get("started_at"))
+        route_plan = args.route_plan or files["route_plan"]
+        route_moves, route_plan_blocks, route_plan_skipped_failed = moves_from_route_plan(
+            route_plan,
+            since=since,
+            passed_only=args.passed_only,
+        )
+        if args.moves and args.moves != route_moves:
+            raise SystemExit("--moves conflicts with --from-route-plan extracted moves")
+        args.moves = route_moves
     if not args.moves:
-        raise SystemExit("--record-pass requires --moves")
+        raise SystemExit("--record-pass requires --moves, or pass --from-route-plan")
 
     started_at = float(active.get("start_time") or time.time())
     elapsed = max(0.0, time.time() - started_at)
@@ -434,6 +488,10 @@ def record_manual_pass(
         "world": world,
         "current_world": current_world,
     }
+    if route_plan_blocks is not None:
+        record["route_source"] = "route_plan_passed_only" if args.passed_only else "route_plan_all_checks"
+        record["route_plan_blocks"] = route_plan_blocks
+        record["route_plan_skipped_failed"] = route_plan_skipped_failed
     if not args.no_run_updates:
         update_run_files(record, run_dir, files)
     if active_path.exists():
@@ -444,6 +502,8 @@ def record_manual_pass(
         f"route_steps={record['route_steps']} game_turns={record['game_turns']} "
         f"elapsed_seconds={record['elapsed_seconds']}"
     )
+    if route_plan_blocks is not None:
+        print(f"route_source={record['route_source']} route_plan_blocks={route_plan_blocks} skipped_failed={route_plan_skipped_failed}")
 
 
 def warn_force_new_abandons_active(
@@ -498,6 +558,9 @@ def main() -> int:
     parser.add_argument("--level", help="Level id. Defaults to current save Previous.")
     parser.add_argument("--name", help="Level name for a newly recorded manual route")
     parser.add_argument("--moves", help="Route moves for --record-pass")
+    parser.add_argument("--from-route-plan", action="store_true", help="For --record-pass, extract moves from the current run's baba_route_plan.md")
+    parser.add_argument("--passed-only", action="store_true", help="With --from-route-plan, include only action_check blocks whose check is pass")
+    parser.add_argument("--route-plan", type=Path, help="Override route plan path for --from-route-plan")
     parser.add_argument("--note", default="", help="Short route note for --record-pass")
     parser.add_argument("--game-turns", type=int, help="Final live-state turn from the winning action_check output.")
     parser.add_argument("--hold-ms", type=int, help="Override route/default key hold")
@@ -561,9 +624,11 @@ def main() -> int:
             return 2
         print("failure_rule=after check=fail read_baba_state.py --limit 60 first; expanded_move_count is not a safe undo count; use baba_undo.py --steps 1 only when undo is truly needed")
         print("route_plan=runs/<current_run_id>/baba_route_plan.md is auto-updated by baba_action_check.py")
+        print("loop_guard=runs/<current_run_id>/baba_loop_guard.json forces action_check after read/suggest/analyze")
         print(f"next_commands={SOLVING_NEXT_COMMANDS}")
         print("anti_overthink_rule=after reading state, run baba_suggest_hypotheses.py --top 5 before any maze/path or rule-arrangement prose longer than 5 lines")
-        print(f"record_command=python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
+        print("search_target_rule=search_route should target one immediate rule/prefix delta, not the full win plan; verify, then call it again if needed")
+        print("record_command=python3 scripts/baba_benchmark.py --record-pass --from-route-plan --game-turns '<win turn>' --note '<short summary>'")
         return 0
 
     if active_path.exists() and args.force_new:
@@ -585,9 +650,11 @@ def main() -> int:
     print("known_routes_used=0")
     print("failure_rule=after check=fail read_baba_state.py --limit 60 first; expanded_move_count is not a safe undo count; use baba_undo.py --steps 1 only when undo is truly needed")
     print("route_plan=runs/<current_run_id>/baba_route_plan.md is auto-updated by baba_action_check.py")
+    print("loop_guard=runs/<current_run_id>/baba_loop_guard.json forces action_check after read/suggest/analyze")
     print(f"next_commands={SOLVING_NEXT_COMMANDS}")
     print("anti_overthink_rule=after reading state, run baba_suggest_hypotheses.py --top 5 before any maze/path or rule-arrangement prose longer than 5 lines")
-    print(f"record_command=python3 scripts/baba_benchmark.py --record-pass --moves '<verified full route>' --note '<short summary>'")
+    print("search_target_rule=search_route should target one immediate rule/prefix delta, not the full win plan; verify, then call it again if needed")
+    print("record_command=python3 scripts/baba_benchmark.py --record-pass --from-route-plan --game-turns '<win turn>' --note '<short summary>'")
     return 0
 
 

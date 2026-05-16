@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from baba_config import load_config
+from baba_loop_guard import record_action
 from baba_send_keys import parse_moves
 
 
@@ -41,6 +42,7 @@ MOVE_ITEM_RE = re.compile(
     r"\((?P<x1>-?\d+),\s*(?P<y1>-?\d+)\)\s*->\s*"
     r"\((?P<x2>-?\d+),\s*(?P<y2>-?\d+)\)"
 )
+POSITION_ITEM_RE = re.compile(r"^(?P<label>[^@]+)@(?P<x>-?\d+),(?P<y>-?\d+)$")
 
 DIRECTION_ALIASES = {
     "+x": "+x",
@@ -163,6 +165,15 @@ def moved_item_reaches_position(item: str, unit: str, coord: tuple[int, int]) ->
     return after == coord
 
 
+def position_item_reaches_position(item: str, unit: str, coord: tuple[int, int]) -> bool:
+    if not unit_matches(item, unit):
+        return False
+    match = POSITION_ITEM_RE.match(item.strip())
+    if not match:
+        return False
+    return (int(match.group("x")), int(match.group("y"))) == coord
+
+
 def parse_try_stdout(stdout: str) -> dict[str, Any]:
     parsed: dict[str, Any] = {key: [] for key in DELTA_KEYS}
     parsed["active_rules_before"] = []
@@ -171,6 +182,8 @@ def parse_try_stdout(stdout: str) -> dict[str, Any]:
     parsed["completion_value"] = None
     parsed["after_turn"] = None
     parsed["after_event"] = ""
+    parsed["after_positions"] = []
+    parsed["after_position_warning"] = ""
     for line in stdout.splitlines():
         for key in DELTA_KEYS:
             prefix = key + "="
@@ -497,6 +510,48 @@ def read_live_rule_texts(args: argparse.Namespace) -> tuple[list[str], str | Non
     return texts, None
 
 
+def read_live_positions(args: argparse.Namespace) -> tuple[list[str], str | None]:
+    command = [sys.executable, str(SCRIPTS_DIR / "read_baba_state.py"), "--json", "--ignore-loop-guard"]
+    if args.config:
+        command.extend(["--config", str(args.config)])
+    if args.save_dir:
+        command.extend(["--save-dir", str(args.save_dir)])
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=min(args.command_timeout, 10.0),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [], "read_baba_state.py --json timed out"
+    if proc.returncode != 0:
+        message = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        return [], message
+    try:
+        state = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return [], f"could not parse read_baba_state.py --json: {exc}"
+
+    positions: list[str] = []
+    for unit in state.get("units", []):
+        if not isinstance(unit, dict) or unit.get("dead") or not unit.get("visible", True):
+            continue
+        name = str(unit.get("name") or "").strip().lower()
+        x = unit.get("x")
+        y = unit.get("y")
+        if not name or x is None or y is None:
+            continue
+        label = name
+        unit_id = unit.get("id")
+        if unit_id is not None:
+            label = f"{label}#{unit_id}"
+        positions.append(f"{label}@{int(x)},{int(y)}")
+    return positions, None
+
+
 def runtime_preflight_errors(args: argparse.Namespace) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -580,10 +635,18 @@ def evaluate(parsed: dict[str, Any], args: argparse.Namespace) -> tuple[bool, li
     for unit, coord_text in args.expect_position:
         coord = parse_coord_text(coord_text)
         matching_moves = [item for item in parsed["moved"] if unit_matches(item, unit)]
-        if not any(moved_item_reaches_position(item, unit, coord) for item in parsed["moved"]):
+        matching_positions = [item for item in parsed.get("after_positions", []) if unit_matches(item, unit)]
+        if not (
+            any(moved_item_reaches_position(item, unit, coord) for item in parsed["moved"])
+            or any(position_item_reaches_position(item, unit, coord) for item in parsed.get("after_positions", []))
+        ):
             failures.append(f"missing position:{unit}@{coord[0]},{coord[1]}")
             if matching_moves:
                 failures.append(f"observed_moved_for_{unit}:" + "; ".join(matching_moves))
+            if matching_positions:
+                failures.append(f"observed_after_positions_for_{unit}:" + "; ".join(matching_positions[:12]))
+            if parsed.get("after_position_warning"):
+                failures.append(f"after_position_warning:{parsed['after_position_warning']}")
             hint = counterpart_hint(parsed["moved"], unit, "position")
             if hint:
                 failures.append(hint)
@@ -639,6 +702,8 @@ def print_observed(parsed: dict[str, Any]) -> None:
         print(f"observed_after_turn={parsed['after_turn']}")
     if parsed.get("after_event"):
         print(f"observed_after_event={parsed['after_event']}")
+    if parsed.get("after_position_warning"):
+        print(f"observed_after_position_warning={parsed['after_position_warning']}")
 
 
 def markdown_code(value: str) -> str:
@@ -913,6 +978,9 @@ def main() -> int:
         print("reason=preflight expectation failed")
         for error in preflight_errors:
             print(f"preflight_error={error}")
+        guard_path = record_action("action_check_preflight_error", args.config, detail=args.moves)
+        if guard_path:
+            print(f"loop_guard=reset path={guard_path}")
         print("allowed_next=python3 scripts/read_baba_state.py --limit 60")
         print("allowed_next=python3 scripts/baba_suggest_hypotheses.py --top 5")
         return 2
@@ -942,6 +1010,9 @@ def main() -> int:
     except subprocess.TimeoutExpired as exc:
         print("check=error")
         print(f"reason=baba_try.py timed out after {args.command_timeout:g}s")
+        guard_path = record_action("action_check_timeout", args.config, detail=args.moves)
+        if guard_path:
+            print(f"loop_guard=reset path={guard_path}")
         if exc.stdout:
             print("--- baba_try stdout ---")
             print(str(exc.stdout).rstrip())
@@ -953,6 +1024,9 @@ def main() -> int:
     if proc.returncode != 0:
         print("check=error")
         print(f"reason=baba_try.py exited with {proc.returncode}")
+        guard_path = record_action("action_check_error", args.config, detail=args.moves)
+        if guard_path:
+            print(f"loop_guard=reset path={guard_path}")
         if proc.stdout:
             print("--- baba_try stdout ---")
             print(proc.stdout.rstrip())
@@ -962,9 +1036,16 @@ def main() -> int:
         return proc.returncode
 
     parsed = parse_try_stdout(proc.stdout)
+    if args.expect_position:
+        after_positions, after_position_warning = read_live_positions(args)
+        parsed["after_positions"] = after_positions
+        parsed["after_position_warning"] = after_position_warning or ""
     passed, failures = evaluate(parsed, args)
     print_observed(parsed)
     print("check=" + ("pass" if passed else "fail"))
+    guard_path = record_action("action_check", args.config, detail=f"{args.moves} check={'pass' if passed else 'fail'}")
+    if guard_path:
+        print(f"loop_guard=reset path={guard_path}")
     try:
         plan_path = append_route_plan(args, moves, parsed, passed=passed, failures=failures)
     except OSError as exc:

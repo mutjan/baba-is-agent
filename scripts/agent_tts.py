@@ -26,6 +26,19 @@ DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
 DEFAULT_MODEL = "mimo-v2.5-tts"
 DEFAULT_VOICE = "mimo_default"
 DEFAULT_LOG_PATH = Path(tempfile.gettempdir()) / "baba_agent_tts.log"
+PLANNING_MARKERS = (
+    "当前思路",
+    "计划",
+    "让我",
+    "也许",
+    "复杂",
+    "重新思考",
+    "重新规划",
+    "推理",
+    "考虑",
+    "我需要先",
+    "我决定",
+)
 
 
 def positive_float(raw: str) -> float:
@@ -54,6 +67,16 @@ def read_text(args: argparse.Namespace) -> str:
     if not text.strip():
         raise SystemExit("Response text is empty; nothing to speak.")
     return text
+
+
+def planning_tts_reason(text: str) -> str | None:
+    compact = " ".join(text.split())
+    marker_hits = [marker for marker in PLANNING_MARKERS if marker in compact]
+    if len(marker_hits) >= 2:
+        return "contains multiple planning markers: " + ", ".join(marker_hits[:4])
+    if len(compact) > 90 and marker_hits:
+        return f"long planning narration with marker {marker_hits[0]!r}"
+    return None
 
 
 def echo_text(text: str) -> None:
@@ -365,6 +388,11 @@ def parse_args() -> argparse.Namespace:
         help="Do not print the response text before synthesis.",
     )
     parser.add_argument(
+        "--allow-planning",
+        action="store_true",
+        help="Allow long planning narration. Benchmark agents should leave this off.",
+    )
+    parser.add_argument(
         "--timeout",
         type=positive_float,
         default=120.0,
@@ -391,6 +419,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     text = read_text(args)
+
+    if not args.allow_planning:
+        reason = planning_tts_reason(text)
+        if reason:
+            print("tts_guard=blocked_planning_narration")
+            print(f"reason={reason}")
+            print("allowed_next=use TTS only for short action/result summaries, or pass --allow-planning for manual debugging")
+            return 2
 
     if not args.no_echo:
         echo_text(text)

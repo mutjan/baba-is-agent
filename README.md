@@ -285,6 +285,11 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   properties for a cell, especially after a move is blocked; this avoids
   confusing passable decoration such as `tile` with nearby `wall is stop`
   blockers hidden by truncated grouped output.
+- `scripts/baba_spatial_diagnostics.py`: read-only live-state diagnostic for
+  edge/corner push limits and actor enclosure. It reports pushable boundary
+  units, geometric/actual push directions, actor reachable-cell counts, and
+  `break_first_candidates` when removing a STOP subject would open new space.
+  `--actor` defaults to `baba` and can be set to another object name.
 - `scripts/baba_app_status.py`: checks configured app name, the actual macOS
   process name, frontmost process, and runtime-state readability.
 - `scripts/baba_send_keys.py`: low-level key sender. Prefer `--observe` so it
@@ -330,6 +335,8 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 - `scripts/baba_suggest_hypotheses.py`: prints candidate rule/action hypotheses.
   After its output, run at most one `--analyze`, then immediately choose one
   1-8 step `scripts/baba_action_check.py` segment with explicit `--expect-*`.
+  Search commands are hidden by default; pass `--show-search` only after choosing
+  exactly one candidate to analyze.
   When the live state turn is greater than 0, generated search commands include
   `--from-live-state` so route analysis starts from the current board, not the
   initial `.l` file. It also prints `edge_text_warnings` for text on room
@@ -337,11 +344,24 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   corner words, so agents avoid impossible pushes. Visible hazard rules such as
   `skull is defeat` are ranked as high-value break candidates when an existing
   WIN rule is already active.
+- `scripts/baba_rule_goal_scan.py`: scans only for the next small rule delta
+  likely needed before a pass, such as `+ flag is win`, `- skull is defeat`, or
+  `+ wall is shut`. It deliberately ignores exact walking routes and reports
+  `action_check_expect` / optional single-rule `search_next` commands so agents
+  choose one rule goal before route analysis. It also ranks phase transforms
+  such as `jelly is baba` when a WIN object is outside the current actor's
+  reachable region, because moving control to that object class can be the only
+  meaningful next rule delta even before the final route is known.
 - `scripts/baba_search_route.py`: analyzes or searches small text-push routes.
   `--make-rule` accepts both `--make-rule flag is win` and
   `--make-rule "flag is win"`. In `selected_text`, labels such as
   `text_flag#0:flag@(x,y)` are text blocks, not physical objects.
+  Agent calls should target the next immediate rule or prefix objective, not a
+  whole-level plan. If passing needs several rule changes, verify one delta with
+  `baba_action_check.py`, then call route search again from live state.
 - `scripts/baba_restart.py`: restarts the current level or world-map position.
+  It refuses to restart after the latest route-plan `action_check` passed unless
+  `--force` is explicit.
 - `scripts/baba_return_to_map.py`: returns from the current level or sub-map to
   its parent map with `esc,down,enter`.
 - `scripts/baba_next_action.py`: read-only helper that classifies the current
@@ -352,12 +372,19 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
 - `scripts/baba_benchmark.py`: starts/resumes benchmark attempts, records
   pass-step scores, and maintains local per-agent run records. When the final
   action check prints `observed_after_turn=<N>`, pass `--game-turns <N>` to
-  `--record-pass` so the score source remains `live_state_turn`. If
+  `--record-pass` so the score source remains `live_state_turn`. For
+  interactive multi-segment solves, `--record-pass --from-route-plan
+  --game-turns <N>` extracts the current run's `baba_route_plan.md`; add
+  `--passed-only` only when failed segments were undone or should not be part of
+  replay. If
   `--force-new` replaces an unfinished active attempt, it prints and logs a
   strong warning because the previous level has no recorded pass.
 - `runs/<run_id>/baba_route_plan.md`: temporary scratchpad automatically updated
   by `scripts/baba_action_check.py` with each short planned segment, expected
   delta, and observed outcome. It is not a known-route source.
+- `runs/<run_id>/baba_loop_guard.json`: temporary state for the analysis/action
+  loop guard. Human-readable state reads, hypotheses, and route analysis advance
+  this guard; `scripts/baba_action_check.py` resets it.
 - `scripts/baba_play_known_route.py`: prints or executes known routes from the
   current run's JSON route data, or an explicit `--routes` path.
 - `scripts/baba_mcp_server.py`: thin MCP stdio wrapper over the core scripts.
@@ -374,6 +401,24 @@ python3 start_benchmark.py --dry-run --skip-primer --no-inspect
   Xiaomi MiMo-V2.5-TTS. It keeps the repo dependency-free, reads
   `MIMO_API_KEY` from the environment, supports dry-run validation, and can echo
   text while a background process synthesizes and plays the audio.
+- Added an anti-overthinking loop guard shared by `read_baba_state.py`,
+  `baba_suggest_hypotheses.py`, and `baba_search_route.py`: after observation or
+  analysis, agents are forced back to a concrete `baba_action_check.py` segment.
+  The guard lives in the current run directory and is reset by `action_check`.
+- Added `scripts/baba_spatial_diagnostics.py` and MCP `spatial_diagnostics` so
+  agents can cheaply identify corner-locked units, edge-axis push limits, and
+  whether the current actor likely needs to break a STOP enclosure first.
+- Added `scripts/baba_rule_goal_scan.py` and MCP `rule_goal_scan` so agents can
+  choose the next minimal rule delta before asking route search for any concrete
+  walking/pushing plan.
+- Clarified route-search targeting: agents should call `baba_search_route.py` for
+  one immediate rule/prefix objective at a time, then verify and repeat, instead
+  of using the final WIN rule as the first search target when intermediate rule
+  changes are still needed.
+- Hid hypothesis `search_next` commands by default, added concrete one-step
+  suggestions to `baba_next_action.py`, protected `baba_restart.py` from
+  discarding recent passing checks without `--force`, and made `agent_tts.py`
+  reject long planning narration unless `--allow-planning` is explicit.
 - Added `scripts/agent_tts_tee.py`, `docs/agent_tts_integration.md`, and an
   OpenCode plugin example so TTS can be wired into CLI agents or host-specific
   plugin systems instead of assuming Codex-only behavior.

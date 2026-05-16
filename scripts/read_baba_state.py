@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from baba_config import load_config
+from baba_loop_guard import check_allowed, record_analysis
 from parse_baba_level import current_level, read_ini_like
 
 
@@ -492,7 +493,19 @@ def main() -> int:
         metavar="X,Y",
         help="Print exact occupants and active properties for a cell. Repeat for multiple cells.",
     )
+    parser.add_argument(
+        "--ignore-loop-guard",
+        action="store_true",
+        help="Bypass the analysis/action loop guard for manual debugging.",
+    )
     args = parser.parse_args()
+
+    guard_enabled = not args.json and not args.at and not args.ignore_loop_guard
+    if guard_enabled:
+        decision = check_allowed("read_state", args.config)
+        if not decision.allowed:
+            decision.print_block()
+            return 2
 
     config = load_config(args.config)
     save_dir = args.save_dir or config.save_dir
@@ -508,6 +521,10 @@ def main() -> int:
         print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         summarize(state, path, limit=args.limit, cells=args.at)
+        if guard_enabled:
+            guard_path = record_analysis("read_state", args.config, detail=f"limit={args.limit}")
+            if guard_path:
+                print(f"loop_guard=after_read path={guard_path}")
     return 0
 
 

@@ -140,6 +140,81 @@ TOOLS: dict[str, dict[str, Any]] = {
             "wait": {"type": "boolean", "description": "Wait for state to exist or change."},
             "timeout": {"type": "number", "description": "Seconds to wait with wait=true."},
             "limit": {"type": "integer", "description": "Limit printed rule/object groups."},
+            "ignore_loop_guard": {"type": "boolean", "description": "Manual debugging escape hatch for the analysis/action loop guard."},
+        },
+    ),
+    "spatial_diagnostics": tool_schema(
+        description=(
+            "Diagnose edge/corner push limits and whether an actor is sealed in a STOP-bounded compartment. "
+            "Use before planning edge/corner pushes or breakout-first decisions."
+        ),
+        properties={
+            **COMMON_CONFIG,
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "path": {"type": "string", "description": "Optional JSON state path override."},
+            "wait": {"type": "boolean", "description": "Wait for state to exist."},
+            "timeout": {"type": "number", "description": "Seconds to wait."},
+            "actor": {"type": "string", "description": "Actor/object name to test for enclosure. Default baba."},
+            "unit": {"type": "array", "items": {"type": "string"}, "description": "Optional boundary unit filters such as text_win, win, rock."},
+            "all_boundary_units": {"type": "boolean", "description": "Include non-pushable boundary units too."},
+            "limit": {"type": "integer", "description": "Limit boundary units printed."},
+            "raw_json": {"type": "boolean", "description": "Return JSON instead of key=value lines."},
+            "ignore_loop_guard": {"type": "boolean", "description": "Manual debugging escape hatch for the analysis/action loop guard."},
+        },
+    ),
+    "rank_breakout_targets": tool_schema(
+        description=(
+            "Rank concrete STOP objects for an OPEN+SHUT breakout. Use after a SHUT blocker + OPEN tool goal "
+            "looks promising, before spending route search on a wall/door that may not open new space."
+        ),
+        properties={
+            **COMMON_CONFIG,
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "path": {"type": "string", "description": "Optional JSON state path override."},
+            "wait": {"type": "boolean", "description": "Wait for state to exist."},
+            "timeout": {"type": "number", "description": "Seconds to wait."},
+            "subject": {"type": "string", "description": "Only rank this STOP subject, e.g. wall or door."},
+            "only_active_shut": {"type": "boolean", "description": "Only rank subjects currently marked SHUT."},
+            "top": {"type": "integer", "description": "Number of ranked breakout targets to print."},
+            "setup_search": {"type": "boolean", "description": "Try a small macro-push search to place the OPEN tool in collision slots."},
+            "setup_candidates": {"type": "integer", "description": "Only run setup_search on this many pre-ranked targets."},
+            "setup_max_states": {"type": "integer", "description": "Per-slot state limit for setup_search."},
+            "raw_json": {"type": "boolean", "description": "Return JSON instead of key=value lines."},
+        },
+    ),
+    "rule_goal_scan": tool_schema(
+        description=(
+            "Scan live rules for the next small rule delta likely needed to pass, without searching exact movement routes. "
+            "Use before route search when the agent needs to choose add/remove rule goals."
+        ),
+        properties={
+            **COMMON_CONFIG,
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "path": {"type": "string", "description": "Optional JSON state path override."},
+            "wait": {"type": "boolean", "description": "Wait for state to exist."},
+            "timeout": {"type": "number", "description": "Seconds to wait."},
+            "actor": {"type": "string", "description": "Actor subject for reachability. Defaults to active YOU subjects, then baba."},
+            "top": {"type": "integer", "description": "Number of rule-goal candidates to print."},
+            "raw_json": {"type": "boolean", "description": "Return JSON instead of key=value lines."},
+            "show_search": {"type": "boolean", "description": "Reveal single-rule search_next commands for add_rule candidates."},
+            "ignore_loop_guard": {"type": "boolean", "description": "Manual debugging escape hatch for the analysis/action loop guard."},
+        },
+    ),
+    "suggest_hypotheses": tool_schema(
+        description=(
+            "Suggest small functional hypotheses from the current live state: break out, make a tool, add WIN, "
+            "change control, or test another local rule template. This is not a solver; verify one candidate with check_moves."
+        ),
+        properties={
+            **COMMON_CONFIG,
+            "save_dir": {"type": "string", "description": "Optional save directory override."},
+            "path": {"type": "string", "description": "Optional JSON state path override."},
+            "wait": {"type": "boolean", "description": "Wait for state to exist."},
+            "timeout": {"type": "number", "description": "Seconds to wait."},
+            "top": {"type": "integer", "description": "Number of hypotheses to print."},
+            "raw_json": {"type": "boolean", "description": "Return JSON instead of key=value lines."},
+            "show_search": {"type": "boolean", "description": "Reveal search_next commands for one chosen candidate."},
+            "ignore_loop_guard": {"type": "boolean", "description": "Manual debugging escape hatch for the analysis/action loop guard."},
         },
     ),
     "parse_rules": tool_schema(
@@ -297,6 +372,7 @@ TOOLS: dict[str, dict[str, Any]] = {
             "app_name": {"type": "string", "description": "Optional macOS app name override."},
             "no_activate": {"type": "boolean", "description": "Do not activate Baba before sending."},
             "dry_run": {"type": "boolean", "description": "Print command without sending keys."},
+            "force": {"type": "boolean", "description": "Restart even when the route plan shows preserved progress."},
         },
     ),
     "return_to_map": tool_schema(
@@ -370,7 +446,19 @@ TOOLS: dict[str, dict[str, Any]] = {
         description="Record an interactively solved level, compute pass-step score, and update run files.",
         properties={
             **COMMON_CONFIG,
-            "moves": {"type": "string", "description": "Verified full route."},
+            "moves": {"type": "string", "description": "Verified full route. Optional when from_route_plan is true."},
+            "from_route_plan": {
+                "type": "boolean",
+                "description": "Extract the route from the current run's baba_route_plan.md instead of passing moves.",
+            },
+            "passed_only": {
+                "type": "boolean",
+                "description": "With from_route_plan, include only action_check blocks whose check is pass.",
+            },
+            "game_turns": {
+                "type": "integer",
+                "description": "Winning live-state turn from action_check, used as score_steps source.",
+            },
             "note": {"type": "string", "description": "Short summary for run notes."},
             "run_id": {"type": "string", "description": "Optional runs/<run_id> directory name."},
             "world": {"type": "string", "description": "Optional world override."},
@@ -387,7 +475,6 @@ TOOLS: dict[str, dict[str, Any]] = {
             },
             "no_run_updates": {"type": "boolean", "description": "Do not append run Markdown records."},
         },
-        required=["moves"],
     ),
 }
 
@@ -581,7 +668,70 @@ def read_state(args: dict[str, Any]) -> tuple[str, bool]:
     add_bool(command, args, "wait", "--wait")
     add_value(command, args, "timeout", "--timeout")
     add_value(command, args, "limit", "--limit")
+    add_bool(command, args, "ignore_loop_guard", "--ignore-loop-guard")
     return run_script("read_baba_state.py", command, args)
+
+
+def spatial_diagnostics(args: dict[str, Any]) -> tuple[str, bool]:
+    command: list[str] = []
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "save_dir", "--save-dir")
+    add_value(command, args, "path", "--path")
+    add_bool(command, args, "wait", "--wait")
+    add_value(command, args, "timeout", "--timeout")
+    add_value(command, args, "actor", "--actor")
+    add_repeat(command, args, "unit", "--unit")
+    add_bool(command, args, "all_boundary_units", "--all-boundary-units")
+    add_value(command, args, "limit", "--limit")
+    add_bool(command, args, "raw_json", "--json")
+    add_bool(command, args, "ignore_loop_guard", "--ignore-loop-guard")
+    return run_script("baba_spatial_diagnostics.py", command, args)
+
+
+def rank_breakout_targets(args: dict[str, Any]) -> tuple[str, bool]:
+    command: list[str] = []
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "save_dir", "--save-dir")
+    add_value(command, args, "path", "--path")
+    add_bool(command, args, "wait", "--wait")
+    add_value(command, args, "timeout", "--timeout")
+    add_value(command, args, "subject", "--subject")
+    add_bool(command, args, "only_active_shut", "--only-active-shut")
+    add_value(command, args, "top", "--top")
+    add_bool(command, args, "setup_search", "--setup-search")
+    add_value(command, args, "setup_candidates", "--setup-candidates")
+    add_value(command, args, "setup_max_states", "--setup-max-states")
+    add_bool(command, args, "raw_json", "--json")
+    return run_script("baba_rank_breakout_targets.py", command, args)
+
+
+def rule_goal_scan(args: dict[str, Any]) -> tuple[str, bool]:
+    command: list[str] = []
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "save_dir", "--save-dir")
+    add_value(command, args, "path", "--path")
+    add_bool(command, args, "wait", "--wait")
+    add_value(command, args, "timeout", "--timeout")
+    add_value(command, args, "actor", "--actor")
+    add_value(command, args, "top", "--top")
+    add_bool(command, args, "raw_json", "--json")
+    add_bool(command, args, "show_search", "--show-search")
+    add_bool(command, args, "ignore_loop_guard", "--ignore-loop-guard")
+    return run_script("baba_rule_goal_scan.py", command, args)
+
+
+def suggest_hypotheses(args: dict[str, Any]) -> tuple[str, bool]:
+    command: list[str] = []
+    add_value(command, args, "config", "--config")
+    add_value(command, args, "save_dir", "--save-dir")
+    add_value(command, args, "path", "--path")
+    add_bool(command, args, "wait", "--wait")
+    add_value(command, args, "timeout", "--timeout")
+    add_value(command, args, "top", "--top")
+    add_bool(command, args, "raw_json", "--json")
+    add_bool(command, args, "show_search", "--show-search")
+    add_bool(command, args, "ignore_loop_guard", "--ignore-loop-guard")
+    return run_script("baba_suggest_hypotheses.py", command, args)
 
 
 def parse_rules(args: dict[str, Any]) -> tuple[str, bool]:
@@ -680,6 +830,7 @@ def restart_level(args: dict[str, Any]) -> tuple[str, bool]:
     add_value(command, args, "app_name", "--app-name")
     add_bool(command, args, "no_activate", "--no-activate")
     add_bool(command, args, "dry_run", "--dry-run")
+    add_bool(command, args, "force", "--force")
     return run_script("baba_restart.py", command, args)
 
 
@@ -770,15 +921,20 @@ def play_known_route(args: dict[str, Any]) -> tuple[str, bool]:
 
 def record_pass(args: dict[str, Any]) -> tuple[str, bool]:
     moves = args.get("moves")
-    if not isinstance(moves, str) or not moves.strip():
-        raise RpcError(-32602, "record_pass requires a non-empty moves string")
-    command: list[str] = ["--record-pass", "--moves", moves]
+    if not as_bool(args, "from_route_plan") and (not isinstance(moves, str) or not moves.strip()):
+        raise RpcError(-32602, "record_pass requires a non-empty moves string unless from_route_plan is true")
+    command: list[str] = ["--record-pass"]
+    if isinstance(moves, str) and moves.strip():
+        command.extend(["--moves", moves])
+    add_bool(command, args, "from_route_plan", "--from-route-plan")
+    add_bool(command, args, "passed_only", "--passed-only")
     add_value(command, args, "config", "--config")
     add_value(command, args, "run_id", "--run-id")
     add_value(command, args, "world", "--world")
     add_value(command, args, "level", "--level")
     add_value(command, args, "name", "--name")
     add_value(command, args, "note", "--note")
+    add_value(command, args, "game_turns", "--game-turns")
     add_value(command, args, "hold_ms", "--hold-ms")
     add_bool(command, args, "allow_without_status", "--allow-without-status")
     add_bool(command, args, "allow_level_mismatch", "--allow-level-mismatch")
@@ -794,6 +950,10 @@ TOOL_HANDLERS = {
     "inspect_state": inspect_state,
     "suggest_next_action": suggest_next_action,
     "read_state": read_state,
+    "spatial_diagnostics": spatial_diagnostics,
+    "rank_breakout_targets": rank_breakout_targets,
+    "rule_goal_scan": rule_goal_scan,
+    "suggest_hypotheses": suggest_hypotheses,
     "parse_rules": parse_rules,
     "try_moves": try_moves,
     "check_moves": check_moves,

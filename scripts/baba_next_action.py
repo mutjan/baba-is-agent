@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from baba_config import load_config
+from baba_loop_guard import status as loop_guard_status
 from parse_baba_level import current_level, read_ini_like
 from read_baba_state import current_save_file, load_agent_state
 
@@ -102,6 +103,100 @@ def classify_context(state: dict[str, Any] | None) -> str:
     return "level"
 
 
+DIRS: tuple[tuple[str, int, int, str], ...] = (
+    ("up", 0, -1, "-y"),
+    ("right", 1, 0, "+x"),
+    ("down", 0, 1, "+y"),
+    ("left", -1, 0, "-x"),
+)
+
+
+def active_props(state: dict[str, Any]) -> dict[str, set[str]]:
+    props: dict[str, set[str]] = {}
+    for rule in state.get("rules", []):
+        target = str(rule.get("target") or "").strip().lower()
+        effect = str(rule.get("effect") or "").strip().lower()
+        if target and effect:
+            props.setdefault(target, set()).add(effect)
+    return props
+
+
+def visible_units(state: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        unit
+        for unit in state.get("units", [])
+        if not unit.get("dead") and unit.get("visible", True) and unit.get("x") is not None and unit.get("y") is not None
+    ]
+
+
+def unit_coord(unit: dict[str, Any]) -> tuple[int, int]:
+    return int(unit.get("x") or 0), int(unit.get("y") or 0)
+
+
+def unit_name(unit: dict[str, Any]) -> str:
+    return str(unit.get("name") or "").strip().lower()
+
+
+def is_text(unit: dict[str, Any]) -> bool:
+    return bool(unit.get("word")) or unit_name(unit).startswith("text_")
+
+
+def has_stop(units: list[dict[str, Any]], props: dict[str, set[str]]) -> bool:
+    return any("stop" in props.get(unit_name(unit), set()) for unit in units)
+
+
+def concrete_check_hints(state: dict[str, Any] | None, *, limit: int = 3) -> list[str]:
+    if not state:
+        return []
+    props = active_props(state)
+    you_names = {name for name, unit_props in props.items() if "you" in unit_props}
+    if not you_names:
+        return []
+    units = visible_units(state)
+    actor = next((unit for unit in units if unit_name(unit) in you_names), None)
+    if actor is None:
+        return []
+    actor_name = unit_name(actor)
+    ax, ay = unit_coord(actor)
+    meta = state.get("meta", {})
+    width = int(meta.get("room_width") or 0)
+    height = int(meta.get("room_height") or 0)
+    by_cell: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for unit in units:
+        by_cell.setdefault(unit_coord(unit), []).append(unit)
+
+    hints: list[str] = []
+    for move, dx, dy, delta in DIRS:
+        target = (ax + dx, ay + dy)
+        if width and height and not (1 <= target[0] <= width - 2 and 1 <= target[1] <= height - 2):
+            continue
+        target_units = by_cell.get(target, [])
+        target_text = next((unit for unit in target_units if is_text(unit)), None)
+        if target_text is not None:
+            tail = (target[0] + dx, target[1] + dy)
+            if width and height and not (1 <= tail[0] <= width - 2 and 1 <= tail[1] <= height - 2):
+                continue
+            tail_units = by_cell.get(tail, [])
+            if has_stop(tail_units, props) or any(is_text(unit) for unit in tail_units):
+                continue
+            text_name = unit_name(target_text)
+            hints.append(
+                "python3 scripts/baba_action_check.py "
+                f"{move!r} --expect-moved-delta {text_name}:{delta} --expect-moved-delta {actor_name}:{delta} "
+                f"--expect-position-at {actor_name}@{target[0]},{target[1]} "
+                f"--expect-position-at {text_name}@{tail[0]},{tail[1]}"
+            )
+        elif not has_stop(target_units, props):
+            hints.append(
+                "python3 scripts/baba_action_check.py "
+                f"{move!r} --expect-moved-delta {actor_name}:{delta} "
+                f"--expect-position-at {actor_name}@{target[0]},{target[1]}"
+            )
+        if len(hints) >= limit:
+            break
+    return hints
+
+
 def recommendation(config_path: Path | None, save_dir_override: Path | None) -> dict[str, Any]:
     config = load_config(config_path)
     save_dir = save_dir_override or config.save_dir
@@ -120,6 +215,7 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
     active_world = active.get("world") if active else None
     active_level = active.get("level") if active else None
     active_status = completion_status(save_dir, active_world, active_level) if active_world and active_level else None
+    guard = loop_guard_status(config.config_path)
 
     payload: dict[str, Any] = {
         "context": context,
@@ -132,6 +228,9 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
         "active_attempt": str(active_path) if active_path else "",
         "active_level": f"{active_world}/{active_level}" if active_world and active_level else "",
         "active_completion_status": active_status,
+        "loop_guard_state": guard["state"],
+        "loop_guard_required_next": guard["required_next"],
+        "loop_guard_path": guard["path"],
     }
 
     if not runtime_state_available:
@@ -176,11 +275,15 @@ def recommendation(config_path: Path | None, save_dir_override: Path | None) -> 
             }
         )
     elif active:
+        hints = concrete_check_hints(state)
         payload.update(
             {
                 "next_mcp_tool": "check_moves",
                 "next_script": "python3 scripts/baba_action_check.py '<short move segment>' --expect-moved-delta '<unit-or-text>:<dir>'",
                 "reason": "A benchmark attempt is active for this run; name one expected observable delta and let the script validate it.",
+                "suggested_check_1": hints[0] if len(hints) > 0 else "",
+                "suggested_check_2": hints[1] if len(hints) > 1 else "",
+                "suggested_check_3": hints[2] if len(hints) > 2 else "",
             }
         )
     elif config.current_run_id:
@@ -213,8 +316,14 @@ def print_payload(payload: dict[str, Any]) -> None:
         "active_attempt",
         "active_level",
         "active_completion_status",
+        "loop_guard_state",
+        "loop_guard_required_next",
+        "loop_guard_path",
         "next_mcp_tool",
         "next_script",
+        "suggested_check_1",
+        "suggested_check_2",
+        "suggested_check_3",
         "route_command",
         "route_target",
         "route_moves",

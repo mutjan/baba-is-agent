@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from baba_config import load_config
+from baba_loop_guard import check_allowed, record_analysis
 from baba_step import state_path
 from parse_baba_level import (
     active_rules,
@@ -996,6 +997,7 @@ def print_analysis(problem: SearchProblem) -> None:
         print(f"goal_prefix={problem.config.goal_subject} is")
     else:
         print(f"goal={problem.config.goal_subject} is {problem.config.goal_property}")
+    print("search_goal_protocol=this command should target one immediate rule/prefix objective, not the full level plan; if solving needs multiple rule changes, call search_route again after verifying this delta")
     print("selected_text=" + ", ".join(text_unit_display(unit) for unit in problem.selected))
     print(f"fixed_text_count={len(problem.fixed)}")
     print(f"target_patterns={len(problem.target_patterns)}")
@@ -1074,6 +1076,7 @@ def main() -> int:
         help="Higher values make the search faster and greedier.",
     )
     parser.add_argument("--analyze", action="store_true", help="Print the derived search problem without searching")
+    parser.add_argument("--force-analysis", action="store_true", help="Bypass the analysis/action loop guard for manual debugging.")
     parser.add_argument(
         "--pattern-margin",
         type=int,
@@ -1098,6 +1101,13 @@ def main() -> int:
         help="Delay used with --execute. Defaults to input_delay in baba_config.json.",
     )
     args = parser.parse_args()
+
+    guard_kind = "search_analyze" if args.analyze else "search"
+    decision = check_allowed(guard_kind, args.config, ignore=args.force_analysis)
+    if not decision.allowed:
+        decision.print_block()
+        return 2
+    record_analysis(guard_kind, args.config, detail=" ".join(args.make_rule or args.make_prefix or []))
 
     if args.make_prefix and args.make_rule:
         raise SystemExit("Use either --make-prefix or --make-rule, not both")
@@ -1162,14 +1172,17 @@ def main() -> int:
     sys.stdout.flush()
 
     if args.analyze:
+        print("post_analyze_protocol=next must be a 1-8 step baba_action_check.py segment with explicit --expect-*; use 1-3 steps for text/rule pushes")
+        print("loop_guard=after_analyze")
         return 0
     if len(problem.target_assignments) > args.max_target_assignments and not args.allow_huge_search:
         raise SystemExit(
             f"Search too broad before expansion: target_assignments={len(problem.target_assignments)} "
             f"> max_target_assignments={args.max_target_assignments}. "
-            "Run with --analyze first, then narrow with --target-start/--target-dir, "
+            "Do not retry broad search. If loop_guard allows it, run one --analyze, then narrow with --target-start/--target-dir, "
             "--select-text-at WORD@X,Y, or --pattern-margin 0/1. "
-            "Use --allow-huge-search only when intentionally running a slow search."
+            "If the final win needs multiple rule changes, rerun with the next immediate rule/prefix target instead of the final pass target. "
+            "Then run baba_action_check.py; use --allow-huge-search only for manual debugging."
         )
 
     route, seen, final_state = solve(problem)

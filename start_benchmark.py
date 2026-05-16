@@ -79,6 +79,12 @@ Efficiency protocol
   immediately choose one 1-8 step check_moves/action_check segment with an
   explicit expected delta. Do not write more than 5 lines of rule-arrangement
   reasoning before the next action_check.
+- The loop guard is enforced by tools: after read_state you may run one
+  suggest_hypotheses or action_check; after suggest_hypotheses you may run one
+  --analyze or action_check; after --analyze the next tool must be action_check.
+- Use route search for the next immediate rule/prefix objective, not the whole
+  level plan. If passing needs multiple rule changes, verify one rule delta,
+  then call search again from the live state.
 - If the next target is a text/rule push, shrink the next action_check to 1-3
   steps before simulating the full route in prose.
 - action_check rejects contradictory rule expectations, and completion status 3
@@ -327,6 +333,8 @@ def print_next_steps() -> None:
     print()
     print("Efficiency rule: explain one hypothesis, execute one short observable segment, then let the script decide.")
     print("Hypothesis rule: after suggest_hypotheses or one --analyze, immediately run one 1-8 step action_check; no >5-line rule-arrangement reasoning.")
+    print("Loop guard rule: if a script prints loop_guard=action_required, stop analysis and run the allowed action_check.")
+    print("Search target rule: call search_route for one immediate rule/prefix delta, not the full win plan; verify, then search again if needed.")
     print("Text rule: for text/rule pushes, the next action_check should be 1-3 steps before any longer route prose.")
     print("Invariant rule: use --expect-rule-kept for current YOU/WIN setup and --forbid-rule-added for bad rules like wall is stop.")
     print("Movement rule: multi-step/text movement needs --expect-moved-delta or --expect-position; bare --expect-moved is only for tiny debugging.")

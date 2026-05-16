@@ -43,15 +43,16 @@ MCP 工具可用时，默认按这个顺序工作：
 1. `app_status`，确认游戏进程和状态文件是否可读
 2. `suggest_next_action`，不确定下一步时先调用它
 3. `inspect_state`
-4. `set_current_run_id`，仅当当前 run id 不对或为空
-5. `start_benchmark`
-6. `check_moves`，先声明一个预期 delta，再用脚本验证短行动段
-7. `try_moves`，仅在调试原始 delta 或没有明确预期时使用
-8. `restart_level`，当实验把局面弄坏或需要回到干净检查点
-9. `undo_moves`，当上一段 `check_moves` 失败且要回到失败段之前
-10. `return_to_map`，当需要从关卡或下级地图回到上级地图
-11. `navigate_next`，当当前状态是世界地图或 overworld
-12. `record_pass`，仅当完成态已经是 `3`
+4. `rule_goal_scan`，当问题是“不知道先改哪条规则”时先扫下一条最小规则 delta
+5. `set_current_run_id`，仅当当前 run id 不对或为空
+6. `start_benchmark`
+7. `check_moves`，先声明一个预期 delta，再用脚本验证短行动段
+8. `try_moves`，仅在调试原始 delta 或没有明确预期时使用
+9. `restart_level`，当实验把局面弄坏或需要回到干净检查点
+10. `undo_moves`，当上一段 `check_moves` 失败且要回到失败段之前
+11. `return_to_map`，当需要从关卡或下级地图回到上级地图
+12. `navigate_next`，当当前状态是世界地图或 overworld
+13. `record_pass`，仅当完成态已经是 `3`
 
 只在 MCP 不可用或正在调试 MCP wrapper 时回退到 `python3 scripts/...`，并说明原因。
 MCP 工具名不是脚本名；不要按工具名猜脚本文件。特别是 `navigate_next`
@@ -88,6 +89,7 @@ MCP 工具名不是脚本名；不要按工具名猜脚本文件。特别是 `na
 - `PUSH` 的含义是：`YOU` 对象朝某方向移动时，可以把对应物体或文字向前推一格，前提是整条被推动链背后有空位。
 - 如果推动链背后是 `STOP`、地图边界或不可推动阻挡物，推动不会发生。
 - 每次推 `PUSH` 物或文字前都要显式检查链式推动：链上每个物体/文字都会前进一格，链尾后方必须是空位；不要只看被接触的第一格。
+- 判断边界、角落、封闭空间时优先用 `python3 scripts/baba_spatial_diagnostics.py --actor baba`。角落里的可推动单位几何上没有可推动方向；边缘上的可推动单位通常只能沿边缘轴向推动。`--actor` 默认是 `baba`，可以传 `--actor wall` 等对象名。
 - 推动文字可以创建或打断规则；移动 `IS`、`YOU`、`WIN`、`STOP`、`PUSH`、`OPEN`、`SHUT` 或名词文字通常是解题核心。
 - 围绕 `X IS DEFEAT` 的对象要生成方向级禁止移动表，而不只是把对象格当成普通阻挡。形式是 `(from_cell, move)`：如果 `YOU` 从某格朝某方向会进入 `DEFEAT` 对象所在格，就禁止这条边。推文字时同理，因为成功推动后 `YOU` 会进入被推文字原来的格子；如果该原格叠着 `DEFEAT` 对象，这个方向的推动也必须排除。
 - 死角和单格口袋是通用风险：如果关键文字或物体被推到边界、`STOP`、`DEFEAT` 或只能从一侧接触的位置，之后可能无法从需要的方向再推动。不要写成本关坐标提示；只把它当成每次推动前要用状态验证的通用机制。
@@ -100,6 +102,7 @@ MCP 工具名不是脚本名；不要按工具名猜脚本文件。特别是 `na
 - 默认使用 `check_moves`：先说清楚预期是新增/打断哪条规则、移动哪个对象，或拿到完成态，再让脚本判定是否命中。
 - 判断某一格是否可走时，用 `python3 scripts/read_baba_state.py --at X,Y` 查目标格精确 occupants 和属性；不要用 `--limit` 后再 `grep tile/wall` 推断，因为分组截断可能隐藏同一目标格附近的 `wall`。
 - 如果动作会把关键物体或文字推向边界、`STOP`、`DEFEAT`、墙角或单格口袋，必须把动作缩短到进入风险前一格先验证；不要在脑内假设之后还能从另一侧推出。
+- 如果不确定 `YOU` 对象是否被围在一个需要先打破 `STOP` 的封闭区域里，先运行 `baba_spatial_diagnostics.py --actor <object>`；如果输出 `needs_break_first=true`，下一步优先测试打断/移除候选 STOP 规则或对象，而不是规划远处 WIN。
 - `check_moves` / `baba_action_check.py` 里必须严格区分实体和文字：`flag` 是旗子实体，`text_flag` 才是写着 FLAG 的文字块；构造规则时预期移动对象必须写 `text_*`。
 - 当行动依赖某条生命线规则时，把它写成不变量：例如保持控制权用 `--expect-rule-kept 'wall is you'` / `--expect-rule-kept 'baba is you'`，避免为了移动文字而顺手失去 `YOU`。
 - 当某条坏规则会卡死路线时，用 `--forbid-rule-added 'wall is stop'`、`--forbid-rule-present 'flag is stop'` 等负约束，而不是只写 `--expect-moved`。
@@ -117,6 +120,15 @@ MCP 工具名不是脚本名；不要按工具名猜脚本文件。特别是 `na
 python3 scripts/baba_suggest_hypotheses.py --top 8
 ```
 
+如果问题更上层，是“不知道先改变哪条规则”，先运行：
+
+```bash
+python3 scripts/baba_rule_goal_scan.py --top 8
+```
+
+`baba_rule_goal_scan.py` 不搜索具体走法，只输出下一条最小规则 delta，例如 `+ flag is win`、`- skull is defeat`、`+ wall is shut`。它会用当前 `YOU/WIN/STOP/DEFEAT` 等规则和近似可达区判断优先级，但输出不是证明；选中一个候选后仍然只能对这一条 delta 做一次 `--analyze` 或一个 1-8 步 `action_check`。`add_rule` 候选可用 `--show-search` 显示单规则 `search_next`；`remove_rule` 候选优先用 `baba_action_check.py ... --expect-rule-removed '<rule>'` 验证。
+如果某个已有 `WIN` 对象暂时不可达，`X IS <当前YOU名词>` 也应被当成高价值阶段目标，例如 `jelly is baba`。这类规则不一定立刻通关，但能把控制权投射到目标对象/隔离区域；不要因为“不知道下一步怎么办”而跳过，先用短动作验证这个单一 delta。
+
 这个脚本不是求解器，也不负责证明路线。它只做第一层功能筛选：从当前 live state 里识别 `YOU`、`PUSH`、`OPEN`、`STOP`、`DEFEAT` 等信号，按少数高价值模板生成候选假设，例如：
 
 - `阻挡物 IS SHUT` + `可移动工具 IS OPEN`
@@ -125,8 +137,10 @@ python3 scripts/baba_suggest_hypotheses.py --top 8
 - 打断可见的 `X IS STOP`
 
 脚本输出的 `search_next` 只能作为候选路线生成入口，不能直接当事实。每个候选仍必须进入短反馈循环，用 `check_moves` / `scripts/baba_action_check.py` 验证真实 delta。
+默认不会显示 `search_next` 命令；只有已经选定一个候选并准备做唯一一次路线分析时，才给 `baba_suggest_hypotheses.py` 加 `--show-search`。
 `baba_suggest_hypotheses.py` 输出后，最多只允许对一个候选运行 1 次 `--analyze`；随后必须立刻选择一个 1-8 步的 `check_moves` / `scripts/baba_action_check.py` 动作段，并带明确 `--expect-*`。禁止继续写超过 5 行的规则排列推演。
 如果下一步涉及推动文字或构造/打断规则，动作段优先缩到 1-3 步；不要在确认第一格推动是否成立前继续推演完整文字路线。
+调用 `baba_search_route.py` 时，`--make-rule` / `--make-prefix` 只能表示“下一步最小规则目标”，不是整关最终目标。如果通关需要多次改规则，就每次只搜索/验证一个规则 delta：例如先打断 `wall is stop`，验证通过后再考虑 `flag is win`，而不是第一次搜索就瞄准最终 `flag is win`。
 如果 live state 的 `turn > 0`，`search_next` 会带 `--from-live-state`；不要去掉它，否则 `baba_search_route.py` 会从初始 `.l` 关卡布局搜索，和当前已经推动过的局面不一致。
 `baba_search_route.py --analyze` 的 `selected_text` 输出里 `text_flag#0:flag@(x,y)` 表示 FLAG 文字块，不是物体 `flag`。物体和文字的移动仍以 `baba_action_check.py` 的 `flag` / `text_flag` 区分为准。
 `edge_text_warnings` 是硬事实：`vertical_locked` 的顶/底边文字不要计划上下推动，`horizontal_locked` 的左右边文字不要计划左右推动，`corner_locked` 的角落文字通常不能作为可移动资源。
@@ -181,6 +195,8 @@ python3 scripts/baba_rank_breakout_targets.py --subject wall --top 8 --setup-sea
 - 每轮对用户最多写 5 行：`观察` / `假设` / `动作` / `结果` / `下一步`。如果需要解释超过 5 行，说明动作太大，必须缩短。
 - 不要在 thinking token 里验证路线。验证必须交给 `check_moves` / `scripts/baba_action_check.py`，并且命令里要有 `--expect-*` 预期。
 - `baba_suggest_hypotheses.py` 或一次 `baba_search_route.py --analyze` 输出后，下一步必须是一个 1-8 步 `check_moves` / `baba_action_check.py` 验证段；不要继续展开超过 5 行的文字/规则排列推演。
+- 工具层有 `baba_loop_guard.json` 硬约束：普通 `read_state` 后只能 `rule_goal_scan` / `suggest_hypotheses` 或 `action_check`；规则目标/假设输出后只能 1 次 `baba_search_route.py --analyze` 或 `action_check`；`--analyze` 后只能 `action_check`。如果脚本输出 `loop_guard=action_required`，不要解释，立刻照 `allowed_next` 做短动作段。
+- 搜索目标必须拆小：不要问搜索“怎样通关”或“怎样形成最终 WIN 规则”如果中间还要改别的规则；只问“下一条我要新增/打断/保持的规则或前缀是什么”，执行并验证后再问下一次。
 - 只验证“某物移动了”不够。多步接近、推文字、推关键物体时，动作段必须包含可检查的方向或终点，例如 `--expect-moved-delta text_is:+x`、`--expect-position baba 7,4`；否则先把动作缩短到单步调试。
 - 如果目标是构造 `X IS WIN` 且当前 `X IS YOU` 已经成立，动作段必须同时带 `--expect-rule-kept 'X is you'`；如果动作可能经过 `STOP`/`YOU`/`WIN` 文本附近，也要为关键规则添加 `--expect-rule-kept` 或 `--forbid-rule-added`。
 - 进入新关后没有 active benchmark 时，唯一下一步是 `start_benchmark`，不是分析关卡。
@@ -192,6 +208,7 @@ python3 scripts/baba_rank_breakout_targets.py --subject wall --top 8 --setup-sea
 - 不要把 `expanded_move_count` 当成安全 undo 次数。失败段可能包含撞墙/无效输入，`z*N` 会越过失败段，撤销更早的成功推字或规则变化。
 - 如果脚本输出 `undo_expanded_steps_unsafe=true` 或 `preserved_progress=...`，禁止整段 undo，也不要 restart；只能读状态后从当前真实 delta 继续，或在确实要回退时用 `python3 scripts/baba_undo.py --steps 1` 单步撤回并观察。
 - `check=fail` 后 `baba_route_plan.md` 里所有未执行段都视为失效；禁止继续解释“理论上应该移动了什么”，禁止从失败前的脑内坐标继续规划，禁止立刻再跑另一个长动作段，禁止用 `baba_action_check.py 'z'` 代替 `baba_undo.py`，禁止在关键进展仍保留时重启。
+- 如果 `baba_restart.py` 输出 `restart_guard=preserved_progress`，说明最近一次 `action_check` 已经通过；禁止重启，除非用户明确要求或手动加 `--force`。
 - `baba_action_check.py` 会拒绝矛盾预期，例如同一条规则同时 `--expect-rule-added` 和 `--expect-rule-removed`。
 - 只有当前已存在 `X IS WIN`，或本段明确 `--expect-rule-added 'X is win'`，才能使用 `--expect-completion-status 3`。
 - 如果已有未完成 active benchmark，切到新关只能显式 `--force-new`，并必须把脚本打印的 abandonment warning 当成风险；不要把它当正常导航。
@@ -200,6 +217,7 @@ python3 scripts/baba_rank_breakout_targets.py --subject wall --top 8 --setup-sea
 - 读完 `baba_action_check.py` / `baba_try.py` 的结果后，以脚本输出为事实来源，不再复述完整坐标模拟；下一轮只解释和 delta 直接相关的差异。
 - 可以记录学到的通用机制，但不要把记录文件写成完整内心独白或关卡解法剧透。
 - 给 agent 的启动提示应要求“用用户语言简洁汇报，不展示长思考过程”。不要写“用中文思考”这类会鼓励长篇内心推演的提示。
+- TTS 只用于短动作/结果汇报。`agent_tts.py` 默认会拒绝长规划旁白；不要用 TTS 播“让我想/也许/计划很复杂”这类推理。
 
 ## 记录要求
 
@@ -226,6 +244,7 @@ runs/<number_agent_model>/
 - 优先用本关刚刚 win 时 live state 的 `turn` 作为 `score_steps`，来源记为 `live_state_turn`。
 - 如果 live state 的 `turn` 不可用，回退到验证路线展开步数，来源记为 `expanded_route_steps`。
 - 如果最终 `baba_action_check.py` 输出 `observed_completion_status=<level>=3` 且有 `observed_after_turn=<N>`，记录通关时把 `--game-turns <N>` 传给 `baba_benchmark.py --record-pass`，避免通关后跳回地图导致脚本读不到刚才关卡的 win turn。
+- 如果本关是交互式多段 `action_check` 过关，可以用 `python3 scripts/baba_benchmark.py --record-pass --from-route-plan --game-turns <N> --note '<summary>'` 从当前 run 的 `baba_route_plan.md` 抽取路线；只有确认失败段都已撤销或不应计入 replay 时，才额外加 `--passed-only`。
 - 实测 undo 会把局面撤回，但不会把 live state `turn` 撤回；undo 本身不额外加一回合。
 - `elapsed_seconds` 只保留作排查基础设施差异的参考，不作为能力评分。
 

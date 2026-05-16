@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from baba_config import load_config
+from baba_loop_guard import check_allowed, record_analysis
 from read_baba_state import load_state
 
 
@@ -253,6 +254,27 @@ def score_open_shut_pair(
     return score, reasons, risks
 
 
+def mechanic_warnings(summary: dict[str, Any]) -> list[str]:
+    props_by_subject: dict[str, set[str]] = summary["props_by_subject"]
+    push_sink = sorted(
+        subject
+        for subject, props in props_by_subject.items()
+        if subject not in META_SUBJECTS and {"push", "sink"} <= props
+    )
+    stop_subjects = sorted(
+        subject
+        for subject, props in props_by_subject.items()
+        if subject not in META_SUBJECTS and "stop" in props
+    )
+    if push_sink and stop_subjects:
+        return [
+            "PUSH+SINK objects cannot be pushed through STOP blockers; use them on non-STOP objects/hazards, "
+            "or first remove/bypass STOP with a rule delta such as SHUT+OPEN or breaking X IS STOP. "
+            f"push_sink={','.join(push_sink)} stop={','.join(stop_subjects)}"
+        ]
+    return []
+
+
 def build_candidates(summary: dict[str, Any]) -> list[Candidate]:
     objects: collections.Counter[str] = summary["objects"]
     text_words: set[str] = summary["text_words"]
@@ -367,6 +389,37 @@ def build_candidates(summary: dict[str, Any]) -> list[Candidate]:
         for subject, props in props_by_subject.items()
         if "win" in props and subject not in META_SUBJECTS
     )
+    for subject in win_subjects:
+        if subject not in text_words or "move" not in text_words or (subject, "move") in active_rules:
+            continue
+        subject_objects = objects.get(subject, 0)
+        score = 62
+        reasons = [
+            f"{subject} is already WIN",
+            "adding MOVE can make the WIN object leave an enclosure or deliver itself without first reaching it",
+        ]
+        risks = [
+            "MOVE direction matters; verify the first tick with --expect-moved-delta or --expect-position before chasing it",
+            "MOVE can send the WIN object away, into a pocket, or into a hazard",
+        ]
+        if subject_objects:
+            score += 20
+            reasons.append(f"{subject} objects are present")
+        if "push" in props_by_subject.get(subject, set()):
+            score += 8
+            reasons.append(f"{subject} is already pushable, so the same object may be a manipulable phase target")
+        add_candidate(
+            candidates,
+            score=score,
+            title=f"animate win object: {rule_text(subject, 'move')}",
+            rules=[(subject, "move")],
+            reasons=reasons,
+            risks=risks,
+            active_rules=active_rules,
+            text_words=text_words,
+            from_live_state=from_live_state,
+        )
+
     for subject, prop in sorted(visible_rules):
         if subject in META_SUBJECTS or prop not in {"stop"} | HAZARD_PROPERTIES:
             continue
@@ -409,7 +462,7 @@ def build_candidates(summary: dict[str, Any]) -> list[Candidate]:
     return sorted(unique.values(), key=Candidate.sort_key)
 
 
-def as_json(summary: dict[str, Any], candidates: list[Candidate], top: int) -> str:
+def as_json(summary: dict[str, Any], candidates: list[Candidate], top: int, *, show_search: bool) -> str:
     meta = summary["meta"]
     payload = {
         "level": {
@@ -421,6 +474,7 @@ def as_json(summary: dict[str, Any], candidates: list[Candidate], top: int) -> s
         "post_hypothesis_protocol": {
             "max_analyze_runs": 1,
             "required_next_action": "choose one 1-8 step baba_action_check.py segment with explicit --expect-*; use 1-3 steps for text/rule pushes",
+            "search_target_scope": "if a solution needs multiple rule changes, each baba_search_route.py call should target only the next immediate rule/prefix objective, not the final pass condition",
             "forbidden": "do not write more than 5 lines of rule-arrangement reasoning after hypotheses/analyze output",
             "push_chain_rule": "chain pushes require free space after the far end; corner/edge/pocket pushes are high-risk and must be verified with short action_check segments",
             "search_state": (
@@ -440,6 +494,9 @@ def as_json(summary: dict[str, Any], candidates: list[Candidate], top: int) -> s
             "open": sorted(
                 subject for subject, props in summary["props_by_subject"].items() if "open" in props
             ),
+            "move": sorted(
+                subject for subject, props in summary["props_by_subject"].items() if "move" in props
+            ),
             "stop": sorted(
                 subject for subject, props in summary["props_by_subject"].items() if "stop" in props
             ),
@@ -449,6 +506,7 @@ def as_json(summary: dict[str, Any], candidates: list[Candidate], top: int) -> s
                 for prop in props & HAZARD_PROPERTIES
             ),
         },
+        "mechanic_warnings": mechanic_warnings(summary),
         "candidates": [
             {
                 "score": item.score,
@@ -456,7 +514,8 @@ def as_json(summary: dict[str, Any], candidates: list[Candidate], top: int) -> s
                 "rules": [rule_text(subject, prop) for subject, prop in item.rules],
                 "reasons": item.reasons,
                 "risks": item.risks,
-                "commands": item.commands,
+                "commands": item.commands if show_search else [],
+                "commands_suppressed": bool(item.commands and not show_search),
             }
             for item in candidates[:top]
         ],
@@ -464,7 +523,7 @@ def as_json(summary: dict[str, Any], candidates: list[Candidate], top: int) -> s
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def print_human(summary: dict[str, Any], candidates: list[Candidate], top: int) -> None:
+def print_human(summary: dict[str, Any], candidates: list[Candidate], top: int, *, show_search: bool) -> None:
     meta = summary["meta"]
     props_by_subject: dict[str, set[str]] = summary["props_by_subject"]
     print(
@@ -476,7 +535,7 @@ def print_human(summary: dict[str, Any], candidates: list[Candidate], top: int) 
     if turn_int(meta) > 0:
         print("search_state=current live board has already changed; search_next includes --from-live-state")
     print("signals:")
-    for prop in ("you", "push", "open", "shut", "stop", "defeat", "win"):
+    for prop in ("you", "push", "open", "shut", "move", "stop", "defeat", "win"):
         subjects = sorted(subject for subject, props in props_by_subject.items() if prop in props)
         if subjects:
             print(f"  {prop}: {', '.join(subjects)}")
@@ -488,6 +547,11 @@ def print_human(summary: dict[str, Any], candidates: list[Candidate], top: int) 
         if len(edge_warnings) > 10:
             print(f"  ... {len(edge_warnings) - 10} more")
         print("edge_rule=locked-axis text cannot be pushed off that axis; build around it or move other words instead of planning a blocked push")
+    warnings = mechanic_warnings(summary)
+    if warnings:
+        print("mechanic_warnings:")
+        for warning in warnings:
+            print(f"  {warning}")
     print()
     print("hypotheses:")
     if not candidates:
@@ -500,16 +564,21 @@ def print_human(summary: dict[str, Any], candidates: list[Candidate], top: int) 
         print("   why=" + "; ".join(item.reasons))
         if item.risks:
             print("   risk=" + "; ".join(item.risks))
-        if item.commands:
+        if item.commands and show_search:
             print("   search_next:")
             for command in item.commands:
                 print(f"     {command}")
             print("   search_rule=run at most one --analyze if the text layout is unclear; then immediately choose one 1-8 step baba_action_check.py segment with explicit --expect-*; use 1-3 steps for text/rule pushes")
+            print("   search_target_scope=one search call should aim at the next immediate rule/prefix delta only; if the level needs multiple rule changes, verify this delta first, then call search again")
             print("   narrow_rule=if --analyze is too broad, add --target-start/--target-dir or --select-text-at before any larger search")
+        elif item.commands:
+            print("   search_next_suppressed=default output hides route-search commands; use --show-search only after choosing one candidate")
+            print("   search_target_scope=when revealing a command, use it as one immediate rule/prefix target, not as a full-solution search")
         print("   push_safety=before pushing text/object, check the whole chain and the far-end cell; avoid corners, edges, STOP/DEFEAT, and one-cell pockets unless the next action_check proves it is safe")
         print("   verify=after any route, run baba_action_check.py with --expect-rule-added, --expect-moved-delta, or --expect-position plus --expect-rule-kept for current YOU if control must remain")
     print()
     print("post_hypothesis_protocol=max_analyze_runs=1; next=choose one 1-8 step baba_action_check.py segment with explicit --expect-*; text/rule push next segment must be 1-3 steps")
+    print("search_target_protocol=do not aim search_route at the final win if that requires several rule changes; split into one immediate rule/prefix target, verify, then search again")
     if turn_int(meta) > 0:
         print("post_hypothesis_search_rule=keep --from-live-state for route analysis/search until the level is restarted")
     print("push_chain_rule=chain pushes require free space after the far end; corner/edge/pocket pushes are high-risk and should be verified by a short action_check, not prose")
@@ -525,15 +594,30 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=3.0)
     parser.add_argument("--top", type=int, default=8, help="Number of hypotheses to print")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    parser.add_argument("--show-search", action="store_true", help="Also print search_next commands. Hidden by default to discourage search loops.")
+    parser.add_argument("--ignore-loop-guard", action="store_true", help="Bypass the analysis/action loop guard for manual debugging.")
     args = parser.parse_args()
+
+    decision = check_allowed("suggest", args.config, ignore=args.ignore_loop_guard)
+    if not decision.allowed:
+        if args.json:
+            print(json.dumps({"loop_guard": "action_required", "state": decision.state, "reason": decision.reason}, ensure_ascii=False, indent=2))
+        else:
+            decision.print_block()
+        return 2
 
     state = load_current_state(args)
     summary = summarize_state(state)
     candidates = build_candidates(summary)
+    guard_path = None
+    if not args.ignore_loop_guard:
+        guard_path = record_analysis("suggest", args.config, detail=f"top={args.top}")
     if args.json:
-        print(as_json(summary, candidates, args.top))
+        print(as_json(summary, candidates, args.top, show_search=args.show_search))
     else:
-        print_human(summary, candidates, args.top)
+        print_human(summary, candidates, args.top, show_search=args.show_search)
+        if guard_path:
+            print(f"loop_guard=after_suggest path={guard_path}")
     return 0
 
 
