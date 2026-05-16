@@ -19,6 +19,11 @@ dev/
 # Local gameplay recordings and derived video analysis artifacts.
 video/
 
+# Local generated docs and integration experiments.
+docs/
+integrations/
+intergrations/
+
 # Unrelated local notes from the original working folder.
 wildermyth_save_reading_method.md
 
