@@ -511,3 +511,16 @@ are not submitted by default.
 Installation, configuration, MCP server configuration, and tool inventory belong
 in `README.md`. This file only defines the goals, behavior, risk boundaries, and
 record requirements after an agent takes over.
+
+## Live Feedback And Recovery
+
+- With a safe observable hypothesis, aim to issue the next short action within
+  10 seconds; this never justifies pointless moves or unsafe retries.
+- Search defaults to a 5-second total budget and fixed current YOU text. Widen
+  only when evidence requires it, using `--move-you-text` or `--time-limit`.
+- After interruption, query the original action ID before continuing. Never
+  replay an uncertain key; completed actions must not be sent again.
+- Separate search, external approval, execution, and state-wait latency.
+- See `docs/live_feedback_protocol.md` for interfaces and recovery boundaries,
+  `docs/agent_baba_primer.md` for basics, and
+  `docs/agent_hypothesis_workflows.md` for short hypothesis workflows.

@@ -39,6 +39,7 @@ from parse_baba_level import (
     read_ini_like,
 )
 from read_baba_state import load_state
+from baba_search_budget import SearchBudget, BudgetExhausted
 
 
 ROOT = Path(__file__).resolve().parent
@@ -82,7 +83,8 @@ class SearchConfig:
     pattern_margin: int
     target_start: Coord | None
     target_dir: str
-    deadline: float | None
+    deadline: float | None = None
+    freeze_you: bool = True
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,7 @@ class SearchProblem:
     config: SearchConfig
     target_patterns: tuple[Pattern, ...]
     target_assignments: tuple[tuple[tuple[int, Coord], ...], ...]
+    budget: SearchBudget | None = None
 
 
 State = tuple[tuple[int, int], tuple[tuple[int, int], ...]]
@@ -562,6 +565,7 @@ def build_target_patterns(
     selected: tuple[TextUnit, ...],
     fixed: tuple[TextUnit, ...],
     config: SearchConfig,
+    budget: SearchBudget | None = None,
 ) -> tuple[Pattern, ...]:
     relevant_words = {actor_name, "is", "you", config.goal_subject}
     if config.goal_property is not None:
@@ -590,10 +594,16 @@ def build_target_patterns(
         goal_shapes = triples
 
     patterns: list[Pattern] = []
-    for you_first, you_is, you_last in triples:
+    you_shapes = triples
+    if config.freeze_you or not config.preserve_you:
+        you_shapes = (None,)
+    for you_shape in you_shapes:
         for goal_shape in goal_shapes:
+            if budget:
+                budget.check('patterns', len(patterns))
             pattern: dict[str, set[Coord]] = defaultdict(set)
-            if config.preserve_you:
+            if config.preserve_you and not config.freeze_you:
+                you_first, you_is, you_last = you_shape
                 pattern[actor_name].add(you_first)
                 pattern["is"].add(you_is)
                 pattern["you"].add(you_last)
@@ -612,6 +622,7 @@ def assignment_options_for_word(
     targets: tuple[Coord, ...],
     selected: tuple[TextUnit, ...],
     fixed: tuple[TextUnit, ...],
+    budget: SearchBudget | None = None,
 ) -> list[tuple[tuple[int, Coord], ...]]:
     fixed_coords = {unit.coord for unit in fixed if unit.word == word}
     remaining = tuple(coord for coord in targets if coord not in fixed_coords)
@@ -620,27 +631,34 @@ def assignment_options_for_word(
         return []
     if not remaining:
         return [()]
-    return [
-        tuple(zip(indices, remaining))
-        for indices in itertools.permutations(selected_indices, len(remaining))
-    ]
+    options = []
+    for indices in itertools.permutations(selected_indices, len(remaining)):
+        if budget:
+            budget.check('assignments', len(options) + 1)
+        options.append(tuple(zip(indices, remaining)))
+    return options
 
 
 def build_target_assignments(
     patterns: tuple[Pattern, ...],
     selected: tuple[TextUnit, ...],
     fixed: tuple[TextUnit, ...],
+    budget: SearchBudget | None = None,
 ) -> tuple[tuple[tuple[int, Coord], ...], ...]:
     assignments: list[tuple[tuple[int, Coord], ...]] = []
     for pattern in patterns:
+        if budget:
+            budget.check('assignments', len(assignments))
         per_word_options: list[list[tuple[tuple[int, Coord], ...]]] = []
         for word, targets in pattern:
-            options = assignment_options_for_word(word, targets, selected, fixed)
+            options = assignment_options_for_word(word, targets, selected, fixed, budget)
             if not options:
                 per_word_options = []
                 break
             per_word_options.append(options)
         for product in itertools.product(*per_word_options):
+            if budget:
+                budget.check('assignments', len(assignments) + 1)
             merged: dict[int, Coord] = {}
             ok = True
             for option in product:
@@ -663,7 +681,10 @@ def build_problem(
     extra_words: list[str],
     selected_text_at: list[tuple[str, Coord]],
     all_is: bool,
+    budget: SearchBudget | None = None,
 ) -> SearchProblem:
+    budget = budget or SearchBudget()
+    budget.check('build')
     units = text_units(level.positions)
     actor_name, you_units = current_you_rule(level, units)
 
@@ -682,23 +703,32 @@ def build_problem(
             raise SystemExit(f"No text_{word} found at {coord}")
         selected_labels.update(unit.label for unit in matches)
 
+    if config.freeze_you:
+        selected_labels.difference_update(unit.label for unit in you_units)
+    # Select a nearby spare IS if the caller did not request one explicitly.
+    if not any(unit.word == 'is' and unit.label in selected_labels for unit in units):
+        spare = [unit for unit in units if unit.word == 'is' and unit not in you_units]
+        if spare:
+            anchors = [u.coord for u in units if u.label in selected_labels]
+            selected_labels.add(min(spare, key=lambda u: min((abs(u.coord[0]-x)+abs(u.coord[1]-y) for x,y in anchors), default=0)).label)
+
     selected = tuple(unit for unit in units if unit.label in selected_labels)
     fixed = tuple(unit for unit in units if unit.label not in selected_labels)
     start_boxes = tuple(unit.coord for unit in selected)
     start_actor = one_object_coord(level, actor_name)
-    patterns = build_target_patterns(level, actor_name, selected, fixed, config)
+    patterns = build_target_patterns(level, actor_name, selected, fixed, config, budget)
     if not patterns:
         raise SystemExit(
             "No candidate target patterns can be built with the selected text. "
             "Try --all-is or --select-text WORD."
         )
-    assignments = build_target_assignments(patterns, selected, fixed)
+    assignments = build_target_assignments(patterns, selected, fixed, budget)
     if not assignments:
         raise SystemExit(
             "No target assignments can be built with the selected text. "
             "Try --all-is or --select-text WORD."
         )
-    return SearchProblem(level, actor_name, start_actor, selected, fixed, start_boxes, config, patterns, assignments)
+    return SearchProblem(level, actor_name, start_actor, selected, fixed, start_boxes, config, patterns, assignments, budget)
 
 
 def text_positions(problem: SearchProblem, boxes: tuple[tuple[int, int], ...]) -> dict[str, tuple[str, tuple[int, int]]]:
@@ -843,6 +873,8 @@ def reachable(
     queue = deque([actor])
     prev: dict[tuple[int, int], tuple[tuple[int, int] | None, str | None]] = {actor: (None, None)}
     while queue:
+        if problem.budget:
+            problem.budget.check('reachable')
         coord = queue.popleft()
         for name, (dx, dy) in DIRS:
             nxt = (coord[0] + dx, coord[1] + dy)
@@ -866,6 +898,8 @@ def target_rule_heuristic(problem: SearchProblem, boxes: tuple[tuple[int, int], 
 
     best = MAX_DISTANCE
     for assignment in problem.target_assignments:
+        if problem.budget:
+            problem.budget.check('heuristic')
         distance = sum(
             abs(boxes[index][0] - target[0]) + abs(boxes[index][1] - target[1])
             for index, target in assignment
@@ -908,11 +942,9 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
 
     while queue and seen < problem.config.max_states:
         if problem.config.deadline is not None and time.monotonic() >= problem.config.deadline:
-            raise SystemExit(
-                f"Search timed out after {seen} states. "
-                "Narrow with --target-start/--target-dir, --select-text-at, "
-                "or --pattern-margin 0/1; do not just increase shell timeout."
-            )
+            raise BudgetExhausted('time_limit')
+        if problem.budget:
+            problem.budget.check('solve', seen)
         _priority, route_cost, _count, state = heapq.heappop(queue)
         if route_cost != cost[state]:
             continue
@@ -939,6 +971,8 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
         blockers = semantic_blockers(problem, boxes)
         forbidden = forbidden_actor_moves(problem, boxes)
         for index, pos in enumerate(boxes):
+            if problem.budget:
+                problem.budget.check('solve', seen)
             for move, (dx, dy) in DIRS:
                 stand = (pos[0] - dx, pos[1] - dy)
                 if stand not in prev:
@@ -972,6 +1006,8 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
                     continue
                 cost[next_state] = next_cost
                 parent[next_state] = (state, [*walk, move])
+                if problem.budget and not problem.budget.candidate_moves and state == start:
+                    problem.budget.candidate_moves = [*walk, move][:8]
                 heuristic = target_rule_heuristic(problem, next_boxes_tuple)
                 heapq.heappush(
                     queue,
@@ -983,7 +1019,8 @@ def solve(problem: SearchProblem) -> tuple[list[str], int, State]:
                     ),
                 )
 
-    raise SystemExit(f"No route found after {seen} states")
+    print(f'search_status=scope_exhausted states={seen}', flush=True)
+    raise SystemExit('No route found within this model and scope; choose a short live experiment or explicitly widen the scope.')
 
 
 def print_analysis(problem: SearchProblem) -> None:
@@ -1000,6 +1037,7 @@ def print_analysis(problem: SearchProblem) -> None:
     print("search_goal_protocol=this command should target one immediate rule/prefix objective, not the full level plan; if solving needs multiple rule changes, call search_route again after verifying this delta")
     print("selected_text=" + ", ".join(text_unit_display(unit) for unit in problem.selected))
     print(f"fixed_text_count={len(problem.fixed)}")
+    print(f"freeze_you_text={problem.config.freeze_you}")
     print(f"target_patterns={len(problem.target_patterns)}")
     print(f"target_assignments={len(problem.target_assignments)}")
     blockers = sorted(semantic_blockers(problem, problem.start_boxes))
@@ -1048,6 +1086,10 @@ def main() -> int:
         metavar="WORD@X,Y",
         help="Include only one text word at a coordinate, e.g. --select-text-at is@12,12.",
     )
+    parser.add_argument("--time-limit", type=float, default=5.0, help="Total seconds including target construction and search")
+    parser.add_argument("--max-patterns", type=int, default=20000)
+    parser.add_argument("--max-assignments", type=int, default=40000)
+    parser.add_argument("--move-you-text", action="store_true", help="Explicitly widen search to moving current YOU text")
     parser.add_argument("--all-is", action="store_true", help="Include every text_is block as movable")
     parser.add_argument("--allow-break-you", action="store_true", help="Do not require the initial YOU rule to stay active")
     parser.add_argument("--no-touch-win", action="store_true", help="Stop after building the requested rule")
@@ -1137,72 +1179,75 @@ def main() -> int:
             raise SystemExit("--select-text-at must be shaped like WORD@X,Y") from exc
         selected_text_at.append((word, parse_coord(raw_coord, "--select-text-at")))
 
-    config = load_config(args.config)
-    game_root = args.game_root or config.game_root
-    save_dir = args.save_dir or config.save_dir
-    delay = args.delay if args.delay is not None else config.input_delay
-    if args.from_live_state:
-        level = load_live_level(save_dir, state_path(save_dir, args.state_path))
-    else:
-        level = load_level(game_root, save_dir, args.world, args.level)
-    source_hint = live_state_hint(save_dir, state_path(save_dir, args.state_path), level) if not args.from_live_state else None
-    search_config = SearchConfig(
-        goal_subject=subject,
-        goal_property=prop,
-        preserve_you=not args.allow_break_you,
-        touch_win=not args.no_touch_win,
-        max_states=args.max_states,
-        heuristic_weight=args.heuristic_weight,
-        pattern_margin=args.pattern_margin,
-        target_start=parse_coord(args.target_start, "--target-start") if args.target_start else None,
-        target_dir=args.target_dir,
-        deadline=(time.monotonic() + args.timeout) if args.timeout and args.timeout > 0 else None,
-    )
-    problem = build_problem(
-        level,
-        search_config,
-        extra_words=args.select_text,
-        selected_text_at=selected_text_at,
-        all_is=args.all_is,
-    )
-    print(f"state_source={'live_export' if args.from_live_state else 'initial_level_file'}")
-    print_analysis(problem)
-    if source_hint:
-        print(source_hint)
-    sys.stdout.flush()
-
-    if args.analyze:
-        print("post_analyze_protocol=next must be a 1-8 step baba_action_check.py segment with explicit --expect-*; use 1-3 steps for text/rule pushes")
-        print("loop_guard=after_analyze")
-        return 0
-    if len(problem.target_assignments) > args.max_target_assignments and not args.allow_huge_search:
-        raise SystemExit(
-            f"Search too broad before expansion: target_assignments={len(problem.target_assignments)} "
-            f"> max_target_assignments={args.max_target_assignments}. "
-            "Do not retry broad search. If loop_guard allows it, run one --analyze, then narrow with --target-start/--target-dir, "
-            "--select-text-at WORD@X,Y, or --pattern-margin 0/1. "
-            "If the final win needs multiple rule changes, rerun with the next immediate rule/prefix target instead of the final pass target. "
-            "Then run baba_action_check.py; use --allow-huge-search only for manual debugging."
+    try:
+        budget = SearchBudget(min(args.time_limit, args.timeout) if args.timeout > 0 else args.time_limit,
+                              args.max_patterns, args.max_assignments if args.allow_huge_search
+                              else min(args.max_assignments, args.max_target_assignments))
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
+        config = load_config(args.config)
+        game_root = args.game_root or config.game_root
+        save_dir = args.save_dir or config.save_dir
+        delay = args.delay if args.delay is not None else config.input_delay
+        if args.from_live_state:
+            level = load_live_level(save_dir, state_path(save_dir, args.state_path))
+        else:
+            level = load_level(game_root, save_dir, args.world, args.level)
+        source_hint = live_state_hint(save_dir, state_path(save_dir, args.state_path), level) if not args.from_live_state else None
+        search_config = SearchConfig(
+            goal_subject=subject,
+            goal_property=prop,
+            preserve_you=not args.allow_break_you,
+            touch_win=not args.no_touch_win,
+            max_states=args.max_states,
+            heuristic_weight=args.heuristic_weight,
+            pattern_margin=args.pattern_margin,
+            target_start=parse_coord(args.target_start, "--target-start") if args.target_start else None,
+            target_dir=args.target_dir,
+            freeze_you=not (args.move_you_text or args.allow_break_you),
         )
-
-    route, seen, final_state = solve(problem)
-    compact = compress_moves(route)
-    actor, boxes = final_state
-    print(f"states={seen}")
-    print(f"steps={len(route)}")
-    print(f"moves={compact}")
-    print(f"final_actor={actor}")
-    print(
-        "final_selected_text="
-        + ", ".join(text_unit_display(unit, coord) for unit, coord in zip(problem.selected, boxes))
-    )
-    print(f"command=python3 scripts/baba_send_keys.py '{compact}' --delay {delay}")
-
-    if args.execute:
-        subprocess.run(
-            [sys.executable, str(ROOT / "baba_send_keys.py"), compact, "--delay", str(delay)],
-            check=True,
+        problem = build_problem(
+            level,
+            search_config,
+            extra_words=args.select_text,
+            selected_text_at=selected_text_at,
+            all_is=args.all_is,
+            budget=budget,
         )
+        print_analysis(problem)
+        if source_hint:
+            print(source_hint)
+
+        if args.analyze:
+            return 0
+
+        route, seen, final_state = solve(problem)
+        compact = compress_moves(route)
+        actor, boxes = final_state
+        print(f"states={seen}")
+        print(f"steps={len(route)}")
+        print(f"moves={compact}")
+        print(f"final_actor={actor}")
+        print(
+            "final_selected_text="
+            + ", ".join(text_unit_display(unit, coord) for unit, coord in zip(problem.selected, boxes))
+        )
+        print(f"command=python3 scripts/baba_send_keys.py '{compact}' --delay {delay}")
+
+        if args.execute:
+            subprocess.run(
+                [sys.executable, str(ROOT / "baba_send_keys.py"), compact, "--delay", str(delay)],
+                check=True,
+            )
+    except BudgetExhausted as exc:
+        print("search_status=budget_exhausted", flush=True)
+        print(f"reason={exc} phase={budget.phase} elapsed_seconds={budget.status()['elapsed_seconds']}", flush=True)
+        print("candidate_moves=" + compress_moves(budget.candidate_moves), flush=True)
+        print("candidate_status=model_only_not_live_verified", flush=True)
+        print("next=choose a short live check; widen search only explicitly; this is not proof of no solution", flush=True)
+        return 3
+
     return 0
 
 

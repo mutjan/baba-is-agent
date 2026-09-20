@@ -63,6 +63,10 @@ Efficiency protocol
 
 - First principles means shortest verifiable feedback loop, not exhaustive
   proof. Do not mentally simulate a whole solution before acting.
+- For live play, target the next short action within 10 seconds of observation.
+  This is a decision target, never a reason for pointless moves or unsafe retries.
+- Text search defaults to a 5-second total budget and fixed current YOU text.
+  Report external approval/state waits separately from decision time.
 - Each solving loop should be: observe 1-3 facts, state one hypothesis with one
   expected observable delta, run one short check_moves/action_check segment, read
   the result, then continue/shorten/restart.

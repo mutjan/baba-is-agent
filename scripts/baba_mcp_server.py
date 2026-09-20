@@ -802,6 +802,25 @@ def check_moves(args: dict[str, Any]) -> tuple[str, bool]:
     add_value(command, args, "pre_delay", "--pre-delay")
     add_value(command, args, "focus", "--focus")
     add_value(command, args, "limit", "--limit")
+    add_value(command, args, "action_id", "--action-id")
+    add_bool(command, args, "resume", "--resume")
+    if args.get("background"):
+        from baba_config import load_config
+        from baba_execution import action_path, new_action_id
+        config = load_config(Path(args["config"]) if args.get("config") else None)
+        action_id = args.get("action_id") or new_action_id()
+        path = action_path(config, action_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() or path.with_suffix('.output').exists():
+            raise RpcError(-32602, "Action ID already exists; query its status before recovery")
+        command.extend(["--action-id", action_id])
+        with path.with_suffix('.output').open('x') as output:
+            proc = subprocess.Popen(script_command("baba_action_check.py", command)[0],
+                                    cwd=ROOT, stdout=output, stderr=subprocess.STDOUT,
+                                    start_new_session=True)
+        BACKGROUND[action_id] = proc
+        return json.dumps({"action_id": action_id, "phase": "submitted",
+                           "next": "action_status", "approval_wait": "external_not_measured"}), False
     return run_script("baba_action_check.py", command, args)
 
 
@@ -942,7 +961,59 @@ def record_pass(args: dict[str, Any]) -> tuple[str, bool]:
     return run_script("baba_benchmark.py", command, args)
 
 
+BACKGROUND = {}
+
+def query_action(args):
+    from baba_config import load_config
+    from baba_execution import action_path, action_status, ExecutionError
+    config = load_config(Path(args["config"]) if args.get("config") else None)
+    action_id = args.get("action_id", "")
+    path = action_path(config, action_id)
+    proc = BACKGROUND.get(action_id)
+    try:
+        result = action_status(config, action_id)
+    except ExecutionError:
+        if not path.with_suffix('.output').exists():
+            raise RpcError(-32602, "Unknown action ID")
+        result = {"action_id": action_id, "phase": "not_accepted",
+                  "next": "inspect_output_do_not_replay"}
+    result['exit_code'] = proc.poll() if proc else None
+    result['wrapper_active'] = proc.poll() is None if proc else None
+    output = path.with_suffix('.output')
+    if output.exists():
+        with output.open('rb') as stream:
+            stream.seek(max(0, output.stat().st_size - 16000))
+            result['output_tail'] = stream.read().decode('utf-8', errors='replace')
+    return json.dumps(result, ensure_ascii=False), False
+
+
+def cancel_action(args):
+    from baba_config import load_config
+    from baba_execution import action_path
+    config = load_config(Path(args["config"]) if args.get("config") else None)
+    path = action_path(config, args.get("action_id", ""))
+    if not path.exists() and not path.with_suffix('.output').exists():
+        raise RpcError(-32602, "Unknown action ID")
+    path.with_suffix('.cancel').touch()
+    return json.dumps({"phase": "cancel_requested", "next": "action_status",
+                       "note": "Stops before the next key; an in-flight key must first be confirmed."}), False
+
+
+TOOLS['check_moves']['inputSchema']['properties'].update({
+    'background': {'type': 'boolean', 'description': 'Return an action ID immediately; query action_status for progress.'},
+    'action_id': {'type': 'string'},
+    'resume': {'type': 'boolean'},
+})
+for name, description in [('action_status', 'Read progress and output; never sends keys.'),
+                          ('cancel_action', 'Stop before the next key, preserving the confirmed prefix.')]:
+    TOOLS[name] = tool_schema(description=description,
+                             properties={**COMMON_CONFIG, 'action_id': {'type': 'string'}},
+                             required=['action_id'])
+
+
 TOOL_HANDLERS = {
+    "action_status": query_action,
+    "cancel_action": cancel_action,
     "app_status": app_status,
     "config_status": config_status,
     "set_current_run_id": set_current_run_id,
