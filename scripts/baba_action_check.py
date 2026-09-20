@@ -9,6 +9,7 @@ segment, and let this script decide whether the observation happened.
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from baba_send_keys import parse_moves
+from baba_execution import new_action_id
+from baba_stream import stream_command
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,6 +171,10 @@ def append_common_args(command: list[str], args: argparse.Namespace) -> None:
 def build_try_command(args: argparse.Namespace) -> list[str]:
     command = [sys.executable, str(SCRIPTS_DIR / "baba_try.py"), args.moves]
     append_common_args(command, args)
+    command.extend(["--action-id", args.action_id])
+    if args.resume:
+        command.append("--resume")
+    command.extend(["--check-request", json.dumps({k: v for k, v in vars(args).items() if k.startswith("expect_")})])
     return command
 
 
@@ -235,7 +242,11 @@ def main() -> int:
     parser.add_argument("--pre-delay", type=float, help="Delay after activating Baba.")
     parser.add_argument("--focus", help="Comma-separated unit names to show in baba_try.py output.")
     parser.add_argument("--limit", type=int, help="Limit printed changed units per category.")
+    parser.add_argument("--action-id", default=None)
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
+    args.action_id = args.action_id or new_action_id()
+    sys.stdout.reconfigure(line_buffering=True)
 
     moves = parse_moves(args.moves)
     if not moves:
@@ -265,16 +276,10 @@ def main() -> int:
         return 0
 
     try:
-        proc = subprocess.run(
-            command,
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=args.command_timeout,
-            check=False,
-        )
+        proc = stream_command(command, cwd=ROOT, timeout=args.command_timeout)
     except subprocess.TimeoutExpired as exc:
         print("check=error")
+        print(f"next=query action_id={args.action_id}; never resend an uncertain key")
         print(f"reason=baba_try.py timed out after {args.command_timeout:g}s")
         if exc.stdout:
             print("--- baba_try stdout ---")
@@ -304,8 +309,6 @@ def main() -> int:
         print("next=do not repair this in thought; shorten, restart, or choose a target the delta actually touched")
     else:
         print("next=continue from the observed delta")
-    print("--- baba_try stdout ---")
-    print(proc.stdout.rstrip())
     return 0 if passed else 1
 
 

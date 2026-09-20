@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,9 @@ from baba_send_keys import activate_game, frontmost_process, parse_moves
 from baba_step import current_state_mtime, send_one, state_path
 from parse_baba_level import read_ini_like
 from read_baba_state import current_save_file, load_state
+from read_baba_state import StateReadError, state_fingerprint
+from baba_execution import (ActionJournal, ExecutionError, actions_dir, action_path,
+                            exclusive_lock, game_lock_path, new_action_id)
 
 
 def rule_text(rule: dict[str, Any]) -> str:
@@ -149,6 +154,98 @@ def level_status(save_dir: Path, world: str | None, level: str | None) -> str | 
     return f"{level}={value}"
 
 
+def validate_benchmark(config, state, save_dir):
+    names = {u.get('name') for u in state.get('units', [])}
+    if {'cursor', 'level'} <= names:
+        return
+    active_path = actions_dir(config).parent / 'baba_benchmark_active.json'
+    try:
+        active = json.loads(active_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ExecutionError('benchmark_not_started: start_benchmark before moving') from exc
+    meta = state['meta']
+    if (active.get('world'), active.get('level')) != (meta.get('world'), meta.get('level')):
+        raise ExecutionError('active_state_mismatch: inspect and start_benchmark --force-new')
+    if level_status(save_dir, meta.get('world'), meta.get('level')) == f"{meta.get('level')}=3":
+        raise ExecutionError('level_already_complete: record_pass before further moves')
+
+
+def wait_move(path, save_dir, before, move, timeout):
+    deadline = time.monotonic() + timeout
+    observed = before
+    while True:
+        latest = load_state(path, wait=True, timeout=max(0, deadline-time.monotonic()),
+                            since_mtime=None, since_state=observed, save_dir=save_dir)
+        meta = latest['meta']
+        if meta.get('source') in ('effect_once', 'level_win_after', 'undoed_after', 'level_start', 'level_restart'):
+            if meta.get('world') != before['meta'].get('world'):
+                raise ExecutionError('unexpected_world_change')
+            if meta.get('level') != before['meta'].get('level') and meta.get('source') != 'level_win_after':
+                raise ExecutionError('unexpected_level_change')
+            if move in ('up', 'down', 'left', 'right') and meta.get('turn') != before['meta'].get('turn') + 1:
+                raise ExecutionError('unexpected_turn_delta: inspect input before continuing')
+            return latest
+        observed = latest
+        if time.monotonic() >= deadline:
+            raise StateReadError('state_incomplete_turn', 'only intermediate exports observed')
+
+
+def execute_segment(args, config, save_dir, path, moves, action_id):
+    journal = None
+    with exclusive_lock(game_lock_path(save_dir)), exclusive_lock(action_path(config, action_id).with_suffix('.lock')):
+        before = load_state(path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
+        journal = ActionJournal(config, action_id, moves, before, resume=args.resume,
+                                request=json.loads(args.check_request))
+        if journal.record['phase'] == 'completed':
+            print('phase=cached_result', flush=True)
+            return journal.record['before'], journal.record['after']
+        try:
+            validate_benchmark(config, before, save_dir)
+            journal.update('focusing')
+            print(f'phase=focusing action_id={action_id}', flush=True)
+            if not args.no_activate:
+                activate_game(args.app_name or config.app_name)
+                time.sleep(args.pre_delay)
+            latest = journal.record['after']
+            for index in range(journal.record['confirmed_steps'], len(moves)):
+                if action_path(config, action_id).with_suffix('.cancel').exists():
+                    journal.update('cancelled', stop_reason='cancel_requested')
+                    break
+                move = moves[index]
+                current = load_state(path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
+                if state_fingerprint(current) != state_fingerprint(latest):
+                    raise ExecutionError('live_state_drift: inspect state before continuing')
+                if frontmost_process() not in {args.app_name or config.app_name, 'Chowdren'}:
+                    raise ExecutionError('window_unfocused: no key sent')
+                journal.dispatch(index, move)
+                started = time.monotonic()
+                print(f'phase=sending action_id={action_id} step={index+1}/{len(moves)} move={move}', flush=True)
+                send_one(move, method=args.method, delay=args.delay if args.delay is not None else config.input_delay, hold_ms=args.hold_ms)
+                journal.update('waiting_state')
+                print(f'phase=waiting_state action_id={action_id} step={index+1}', flush=True)
+                new_state = wait_move(path, save_dir, latest, move, args.timeout)
+                journal.confirm(new_state, time.monotonic()-started)
+                meta = new_state['meta']
+                print(f"sent={index+1}/{len(moves)} move={move} turn={meta.get('turn')} seq={meta.get('sequence')} event={meta.get('source')} command={meta.get('last_command')}", flush=True)
+                changed = ruleset(latest) != ruleset(new_state)
+                latest = new_state
+                if meta.get('source') == 'level_win_after':
+                    journal.update('completed', stop_reason='win')
+                    break
+                if changed and index+1 < len(moves):
+                    journal.update('checkpoint', stop_reason='rule_change')
+                    print(f'phase=checkpoint confirmed_steps={index+1} remaining_steps={len(moves)-index-1}', flush=True)
+                    break
+            else:
+                journal.update('completed', stop_reason='moves_finished')
+            return journal.record['before'], latest
+        except (Exception, SystemExit, KeyboardInterrupt) as exc:
+            reason = getattr(exc, 'reason', str(exc) or type(exc).__name__)
+            journal.update('interrupted' if isinstance(exc, KeyboardInterrupt) else 'error', error=reason)
+            print(f'phase={journal.record["phase"]} action_id={action_id} confirmed_steps={journal.record["confirmed_steps"]} pending={json.dumps(journal.record["pending"])} reason={reason}', flush=True)
+            raise
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("moves", nargs="?", default="", help="Comma-separated moves, e.g. 'left*3,up'")
@@ -176,46 +273,36 @@ def main() -> int:
         help="Comma-separated unit names to show, such as wall,text_is,flag,win. Defaults to all changed units.",
     )
     parser.add_argument("--limit", type=int, default=20, help="Limit printed changed units per category")
+    parser.add_argument('--action-id', help='Stable action identifier for status/resume')
+    parser.add_argument('--resume', action='store_true', help='Resume only a confirmed prefix with an exact state match')
+    parser.add_argument('--check-request', default='{}', help=argparse.SUPPRESS)
+    parser.add_argument('--status', metavar='ACTION_ID', help='Read durable progress without sending keys')
     args = parser.parse_args()
 
     config = load_config(args.config)
+    if args.status:
+        from baba_execution import action_status
+        print(json.dumps(action_status(config, args.status), ensure_ascii=False))
+        return 0
     save_dir = args.save_dir or config.save_dir
     app_name = args.app_name or config.app_name
     delay = args.delay if args.delay is not None else config.input_delay
     live_state_path = state_path(save_dir, args.state_path)
 
-    before = load_state(live_state_path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
-    print_header(before, "before")
-
     moves = parse_moves(args.moves) if args.moves else []
     if moves:
-        print("moves=" + ",".join(moves))
-        if not args.no_activate:
-            activate_game(app_name)
-            time.sleep(args.pre_delay)
-
-        latest_state = before
-        for index, move in enumerate(moves, start=1):
-            before_mtime = current_state_mtime(live_state_path, save_dir)
-            send_one(move, method=args.method, delay=delay, hold_ms=args.hold_ms)
-            latest_state = load_state(
-                live_state_path,
-                wait=True,
-                timeout=args.timeout,
-                since_mtime=before_mtime,
-                save_dir=save_dir,
-            )
-            meta = latest_state.get("meta", {})
-            print(
-                f"sent={index}/{len(moves)} move={move} "
-                f"turn={meta.get('turn')} seq={meta.get('sequence')} "
-                f"event={meta.get('source')} command={meta.get('last_command')}"
-            )
-        after = latest_state
-        print("frontmost=" + frontmost_process())
+        action_id = args.action_id or new_action_id()
+        print(f'phase=accepted action_id={action_id}', flush=True)
+        try:
+            before, after = execute_segment(args, config, save_dir, live_state_path, moves, action_id)
+        except (ExecutionError, StateReadError) as exc:
+            print(f'check=error reason={exc}', flush=True)
+            return 1
     else:
+        before = load_state(live_state_path, wait=False, timeout=0, since_mtime=None, save_dir=save_dir)
         after = before
 
+    print_header(before, "before")
     print_header(after, "after")
     focus = parse_focus(args.focus)
     print_delta(before, after, focus=focus, limit=args.limit)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import hashlib
 import sys
 import time
 from pathlib import Path
@@ -67,6 +68,15 @@ def load_save_state(save_file: Path) -> dict[str, Any] | None:
     raw = sections.get("codex_state")
     if not raw or raw.get("schema") != "codex-baba-state-export-v1":
         return None
+    for key in ('turn', 'sequence', 'world', 'level', 'unit_count', 'rule_count'):
+        if key not in raw:
+            raise ValueError(f'incomplete export: missing {key}')
+    for kind in ('unit', 'rule'):
+        count = to_int(raw.get(kind + '_count'))
+        if count is None or count < 0:
+            raise ValueError(f'invalid {kind}_count')
+        if any(not raw.get(f'{kind}_{i}') for i in range(1, count + 1)):
+            raise ValueError(f'incomplete {kind} rows')
 
     meta = {
         "schema": raw.get("schema"),
@@ -147,6 +157,25 @@ def load_save_state(save_file: Path) -> dict[str, Any] | None:
     return {"meta": meta, "rules": rules, "feature_index": feature_index, "units": units}
 
 
+class StateReadError(SystemExit):
+    def __init__(self, reason: str, detail: str):
+        self.reason = reason
+        self.detail = detail
+        super().__init__(f'{reason}: {detail}')
+
+
+def state_fingerprint(state: dict[str, Any]) -> str:
+    """Identity of a complete observation, excluding storage metadata."""
+    meta = state.get('meta', {})
+    value = {
+        'meta': {k: meta.get(k) for k in ('world', 'level', 'turn', 'sequence', 'source')},
+        'rules': state.get('rules', []),
+        'units': [{k: u.get(k) for k in ('id','name','x','y','dir','dead','visible','float')}
+                  for u in state.get('units', [])],
+    }
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 def load_state(
     path: Path,
     *,
@@ -154,35 +183,49 @@ def load_state(
     timeout: float,
     since_mtime: float | None,
     save_dir: Path | None = None,
+    since_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     config_save_dir: Path | None = save_dir
+    baseline = state_fingerprint(since_state) if since_state is not None else None
+    last_reason, last_detail = 'state_missing', str(path)
     while True:
-        if path.exists():
-            stat = path.stat()
-            if since_mtime is None or stat.st_mtime > since_mtime:
-                state = json.loads(path.read_text(encoding="utf-8"))
-                state.setdefault("meta", {})["storage"] = "json"
-                state.setdefault("meta", {})["storage_path"] = str(path)
-                return state
-
         if config_save_dir is None:
             config_save_dir = load_config().save_dir
-        save_file = current_save_file(config_save_dir)
-        if save_file.exists():
-            stat = save_file.stat()
-            if since_mtime is None or stat.st_mtime > since_mtime:
-                state = load_save_state(save_file)
-                if state is not None:
+        try:
+            save_file = current_save_file(config_save_dir)
+        except (OSError, ValueError, SystemExit) as exc:
+            save_file = config_save_dir / 'unavailable-save'
+            last_reason, last_detail = 'state_parse_failed', str(exc)
+        explicit_json = path.resolve() != (config_save_dir / 'codex_state.json').resolve()
+        candidates = [(path, 'json')] if explicit_json else [(save_file, 'save'), (path, 'json')]
+        found = False
+        for candidate, storage in candidates:
+            if not candidate.exists():
+                continue
+            found = True
+            try:
+                stat = candidate.stat()
+                state = json.loads(candidate.read_text(encoding='utf-8')) if storage == 'json' else load_save_state(candidate)
+                if not isinstance(state, dict) or not isinstance(state.get('meta'), dict) or not isinstance(state.get('units'), list) or not isinstance(state.get('rules'), list):
+                    raise ValueError('missing complete state structure')
+                if any(state['meta'].get(k) is None for k in ('level', 'world', 'turn', 'sequence')):
+                    raise ValueError('incomplete state metadata')
+                state['meta'].update(storage=storage, storage_path=str(candidate))
+                changed = state_fingerprint(state) != baseline if baseline is not None else (since_mtime is None or stat.st_mtime > since_mtime)
+                if changed:
                     return state
-
+                last_reason, last_detail = 'state_unchanged', f'valid state, no new observation: {candidate}'
+                # A valid current save takes precedence over a stale legacy JSON.
+                break
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                last_reason, last_detail = 'state_parse_failed', f'{candidate}: {exc}'
+                break
+        if not found:
+            last_reason, last_detail = 'state_missing', f'{path} / {save_file}'
         if not wait or time.monotonic() >= deadline:
-            if not path.exists():
-                raise SystemExit(
-                    f"State not found in JSON ({path}) or save group ({save_file})"
-                )
-            raise SystemExit(f"State did not change before timeout: {path} / {save_file}")
-        time.sleep(0.05)
+            raise StateReadError(last_reason, last_detail)
+        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
 
 
 def compact_coord(unit: dict[str, Any]) -> str:

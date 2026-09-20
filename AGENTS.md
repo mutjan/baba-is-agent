@@ -2,7 +2,7 @@
 
 根据第一性原理，本项目的目标不是复现已有路线，而是让 agent 从当前真实状态出发，交互式学习并通关 Baba Is You 关卡，同时留下可验证的 benchmark 记录。
 
-## 目标与成功标准
+## 目标与硬标准
 
 - 每次接手先确认真实状态：配置、当前 save、当前关卡、初始规则、是否在地图。
 - Benchmark 是从零开始的学习和通关能力测试，不要把当前 run 目录里的 `baba_known_routes.json` 当成解法来源。
@@ -11,7 +11,7 @@
 - 每过一关，记录本关 `score_steps` 并更新当前 run 目录里的记录文件。
 - 回答用户时使用用户的语言；本仓库协作默认每次回答以“根据第一性原理……”开头。
 
-## 协作输出规则
+## 输出与决策原则
 
 - 先确认真实目标、约束和成功标准，不要套用惯例。
 - 如果目标、成功标准或风险边界不清晰且会影响实现方向，先向用户提问。
@@ -20,164 +20,83 @@
 - 默认简洁输出：结论、关键理由、改动点、验证结果。
 - 第一性原理在本项目里等于寻找最短可验证反馈回路，不等于穷举所有路线或长篇证明。
 
-## 首选入口
+## 启动决策表
 
-新 clone 或新 agent 接手后，从根目录运行：
+| 当前状态 | 下一步 |
+| --- | --- |
+| MCP 工具可用 | 先 `app_status`，再 `inspect_state`；不确定下一步时用 `suggest_next_action` |
+| MCP 不可用或正在调试 MCP wrapper | 回退到 `python3 start_benchmark.py ...` 或 `python3 scripts/...`，并说明原因 |
+| 新 clone 或新 agent 接手 | 优先 MCP `start_benchmark`；裸脚本 fallback 是 `python3 start_benchmark.py --run-id 001_agent_model` |
+| 只做安装后干跑检查 | `python3 start_benchmark.py --dry-run --skip-primer --no-inspect` |
+| 当前是世界地图或 overworld | 不要开始关卡 benchmark；用 `navigate_next` 或 `map_route` 进未完成关 |
+| 进入普通关卡后没有 active benchmark | 唯一下一步是 `start_benchmark`，不是分析关卡 |
+| `active_state_mismatch=true` | 不继续解题，不绕过记录；按脚本提示用 `--force-new` 修正 active 记录 |
+| 已经胜利，completion status 是 `3` | 调用 `record_pass`，然后更新当前 run 记录 |
+| 不知道该试什么 | 先读 `docs/agent_hypothesis_workflows.md`，再选一个短 `check_moves` 验证 |
 
-```bash
-python3 start_benchmark.py --run-id 001_agent_model
-```
+## MCP 优先工具顺序
 
-如果 MCP 可用，优先通过 MCP 调用 `start_benchmark`，不要优先直接调用裸脚本。裸脚本是 fallback 和调试入口。
+1. `app_status`：确认游戏进程和状态文件是否可读。
+2. `inspect_state`：确认当前 live level、规则、对象和地图/关卡类型。
+3. `suggest_next_action`：不确定下一步时先调用它。
+4. `set_current_run_id`：仅当当前 run id 不对或为空。
+5. `start_benchmark`：普通关卡开始计分前必须运行。
+6. `check_moves`：默认动作入口；先声明一个预期 delta，再验证短行动段。
+7. `try_moves`：仅在调试原始 delta 或没有明确预期时使用。
+8. `restart_level`：实验把局面弄坏或需要回到干净检查点时使用。
+9. `return_to_map`：需要从关卡或下级地图回到上级地图时使用。
+10. `navigate_next` / `map_route`：当前状态是地图时进关。
+11. `record_pass`：仅当 completion status 已经是 `3`。
 
-干跑检查：
+## 地图与关卡边界
 
-```bash
-python3 start_benchmark.py --dry-run --skip-primer --no-inspect
-```
-
-## MCP 优先流程
-
-MCP 工具可用时，默认按这个顺序工作：
-
-1. `app_status`，确认游戏进程和状态文件是否可读
-2. `suggest_next_action`，不确定下一步时先调用它
-3. `inspect_state`
-4. `set_current_run_id`，仅当当前 run id 不对或为空
-5. `start_benchmark`
-6. `check_moves`，先声明一个预期 delta，再用脚本验证短行动段
-7. `try_moves`，仅在调试原始 delta 或没有明确预期时使用
-8. `restart_level`，当实验把局面弄坏或需要回到干净检查点
-9. `return_to_map`，当需要从关卡或下级地图回到上级地图
-10. `navigate_next`，当当前状态是世界地图或 overworld
-11. `record_pass`，仅当完成态已经是 `3`
-
-只在 MCP 不可用或正在调试 MCP wrapper 时回退到 `python3 scripts/...`，并说明原因。
-
-## 游戏进程识别
-
-- macOS 上配置里的 app/bundle 名通常是 `Baba Is You`，但实际前台进程可能是引擎名 `Chowdren`。
-- 不要把 `System Events` 里的 `processes contains "Baba Is You"` 当作唯一运行判断；它可能是假阴性。
-- 用 MCP `app_status` 或脚本 `python3 scripts/baba_app_status.py` 判断。`running_process_detected=True` 且 `running_process_name=Chowdren` 是正常状态。
-- `frontmost_process=Chowdren` 只能说明窗口聚焦；能否读状态、能否移动，还要看 `save_state_available`、`inspect_state` 和后续 `check_moves` 结果。
-
-## 地图与普通关卡的区分
-
-- 如果当前关卡是世界地图或 overworld，例如 `106level`、`177level`，不要按普通 Baba 关卡求解。
-- 地图上没有 Baba 对象不是错误。地图的可控对象是 live-state 里的 `cursor`，控制模型是 `cursor is select`。
-- 地图状态下使用 `navigate_next` 或 `map_route` 进入未完成关卡；进入后再读取普通关卡规则，再开始本关 benchmark。
-- `navigate_next` / `map_route --execute` 只负责进关，不等于开始计分。进入普通关卡后，先运行 MCP `start_benchmark` 或 `python3 start_benchmark.py`，再开始解题。
-- 不要自己从所有可见 `level` 单元里猜目标。地图上会显示很多当前不可达的关卡；以 `suggest_next_action` 的 `route_target` / `route_moves` 或 `map_route` 输出为准。
+- 世界地图或 overworld 示例：`106level`、`177level`。地图上没有 Baba 对象不是错误，可控对象是 live-state 里的 `cursor`，控制模型是 `cursor is select`。
+- 地图上会显示很多当前不可达的关卡；不要自己从所有可见 `level` 单元里猜目标。以 `suggest_next_action` 的 `route_target` / `route_moves` 或 `map_route` 输出为准。
+- `navigate_next` / `map_route --execute` 只负责进关，不等于开始计分。进入普通关卡后，先运行 MCP `start_benchmark` 或裸脚本 fallback。
 - 大地图通过 `0level` 后，典型下一关是 `1level`，坐标 `(11,14)`；从 `0level` 坐标 `(10,16)` 的路线是 `right,up,up,enter`。
 - 在关卡内或下级地图内需要返回上级地图时，用 `return_to_map`。底层按键是 `esc,down,enter`。
 
-不要在地图或下级地图上开始关卡 benchmark。`start_benchmark` 如果检测到当前是地图，会提示先 `navigate_next`，避免把地图当普通关卡计分。
+## 短反馈解题循环
 
-如果 `start_benchmark` 报 `active_state_mismatch=true`，说明当前 live level 和未完成的 active benchmark 文件不一致。此时不要继续解题，也不要用 `--record-pass --level ...` 绕过；按脚本给出的 `--force-new` 修正 active 记录后再行动。
-
-## Baba 基础规则提示
-
-- 规则通常由可见文字组成，形式是 `NOUN IS PROPERTY`。
-- `YOU` 标记可控制对象；`WIN` 标记胜利对象；`STOP` 阻挡移动；`DEFEAT` 会消灭 `YOU`。
-- `SHUT` 和 `OPEN` 接触时会互相移除，例如钥匙开门。
-- 文字默认可推动。`TEXT IS PUSH` 是基础规则，可能生效但不会在关卡里显式摆出来。
-- `PUSH` 的含义是：`YOU` 对象朝某方向移动时，可以把对应物体或文字向前推一格，前提是整条被推动链背后有空位。
-- 如果推动链背后是 `STOP`、地图边界或不可推动阻挡物，推动不会发生。
-- 推动文字可以创建或打断规则；移动 `IS`、`YOU`、`WIN`、`STOP`、`PUSH`、`OPEN`、`SHUT` 或名词文字通常是解题核心。
-- 围绕 `X IS DEFEAT` 的对象要生成方向级禁止移动表，而不只是把对象格当成普通阻挡。形式是 `(from_cell, move)`：如果 `YOU` 从某格朝某方向会进入 `DEFEAT` 对象所在格，就禁止这条边。推文字时同理，因为成功推动后 `YOU` 会进入被推文字原来的格子；如果该原格叠着 `DEFEAT` 对象，这个方向的推动也必须排除。
-- 死角和单格口袋是通用风险：如果关键文字或物体被推到边界、`STOP`、`DEFEAT` 或只能从一侧接触的位置，之后可能无法从需要的方向再推动。不要写成本关坐标提示；只把它当成每次推动前要用状态验证的通用机制。
-
-## 交互式解题循环
-
-- 不需要先知道完整解法。先读状态，提出一个能被状态验证的小假设。
-- 有明确预期时，不必一步一读；可以走到下一个有意义变化为止，例如 `left*3` 推开某个 `IS`。
-- 优先让游戏动起来：短行动段比重计算搜索更适合直播和小模型接手。
-- 默认使用 `check_moves`：先说清楚预期是新增/打断哪条规则、移动哪个对象，或拿到完成态，再让脚本判定是否命中。
-- 只在需要看完整原始 delta 时使用 `try_moves`：规则新增/消失、目标对象移动、对象消失、完成态变化。
-- 如果分支错了，用 `restart_level` 回到干净状态，再缩短或修正假设。
-- 只有当问题主要是移动少量文字、目标规则明确、且搜索模型覆盖这些机制时，才使用重搜索。
-
-## 假设生成脚本
-
-当读完当前状态但还不知道下一步该试什么时，先运行：
-
-```bash
-python3 scripts/baba_suggest_hypotheses.py --top 8
-```
-
-这个脚本不是求解器，也不负责证明路线。它只做第一层功能筛选：从当前 live state 里识别 `YOU`、`PUSH`、`OPEN`、`STOP`、`DEFEAT` 等信号，按少数高价值模板生成候选假设，例如：
-
-- `阻挡物 IS SHUT` + `可移动工具 IS OPEN`
-- `当前可控对象 IS WIN`
-- `某个对象 IS YOU`
-- 打断可见的 `X IS STOP`
-
-脚本输出的 `search_next` 只能作为候选路线生成入口，不能直接当事实。每个候选仍必须进入短反馈循环，用 `check_moves` / `scripts/baba_action_check.py` 验证真实 delta。
-
-典型用法：
-
-```bash
-python3 scripts/baba_suggest_hypotheses.py --top 5
-python3 scripts/baba_suggest_hypotheses.py --json --top 5
-```
-
-如果脚本给出的第一候选是类似 `wall is shut + star is open`，下一步不是穷举所有文字排列，而是分别验证这些目标规则是否能被短路线构造；构造成功后再验证实体交互是否真的打开通路。
-
-当 `阻挡物 IS SHUT` + `可推动工具 IS OPEN` 已经成立，或已经被列为最高候选时，先用真挡路墙排序器筛掉“不挡路墙”：
-
-```bash
-python3 scripts/baba_rank_breakout_targets.py --subject wall --top 8
-python3 scripts/baba_rank_breakout_targets.py --subject wall --top 3 --json
-python3 scripts/baba_rank_breakout_targets.py --subject wall --top 8 --setup-search --setup-candidates 8
-```
-
-这个脚本从 live state 计算：
-
-- `DEFEAT` 周围的方向级禁止移动边，例如 `(12,11)->up`。
-- 假设删除每个候选 `STOP` 对象后，`YOU` 可达区域新增多少格。
-- 这个对象是否是真门槛：删除前哪一侧可达，删除后哪一侧变成新区域。
-- `OPEN+PUSH` 工具的撞击槽位：工具目标格、Baba 站位、推动方向。
-
-`--setup-search` 会在初筛结果上继续做小型推物搜索，尝试把 `OPEN+PUSH` 工具和必要的 `SHUT` 文字推到“撞墙前一刻”的局面，并输出 `setup_route`。这是慢一点但更可靠的二筛；不要默认全图穷举，优先限制 `--setup-candidates`。
-
-排序结果只能决定“优先撞哪一格墙/门”，不能替代真实验证。选中候选后仍要用 `check_moves` / `scripts/baba_action_check.py` 验证工具和阻挡物是否真的一起消失，再读状态确认可达区域或完成态变化。
-
-## 解题效率协议
-
-有些模型会把 `第一性原理` 和 `MECE` 理解成“先在脑内证明完整解法”。本项目不要这样做。除非用户明确要求讲解推理过程，否则每轮解题只输出并执行一个短反馈循环：
+除非用户明确要求讲解推理过程，否则每轮只输出并执行一个短反馈循环：
 
 ```text
 观察：当前最关键的 1-3 个事实。
 假设：这段短动作预期会改变什么。
 动作：check_moves/map_route/restart_level 的一个命令，普通关卡动作段优先控制在 1-8 步。
 结果：只读 delta，决定继续、缩短、撤回或重启。
+下一步：继续当前目标、换目标，或回到干净检查点。
 ```
 
-- 每轮只能选择一个可观测目标：
-  - 改变一条规则。
-  - 移动一个关键文字或物体。
-  - 接近一个目标区域。
-  - 验证一个阻挡是否成立。
-- 每轮对用户最多写 5 行：`观察` / `假设` / `动作` / `结果` / `下一步`。如果需要解释超过 5 行，说明动作太大，必须缩短。
-- 不要在 thinking token 里验证路线。验证必须交给 `check_moves` / `scripts/baba_action_check.py`，并且命令里要有 `--expect-*` 预期。
-- 进入新关后没有 active benchmark 时，唯一下一步是 `start_benchmark`，不是分析关卡。
+- 每轮只选一个可观测目标：改变一条规则、移动一个关键文字或物体、接近一个目标区域、验证一个阻挡是否成立。
+- 有明确预期时，不必一步一读；可以走到下一个有意义变化为止。
+- 不要在 hidden thinking 里验证路线。验证必须交给 `check_moves` / `scripts/baba_action_check.py`，并带上 `--expect-*` 预期。
 - 不要在执行前手工推演超过 8 步；超过就拆成两个可验证动作段。
-- 不要枚举所有可能规则排列、所有坐标路线、所有 “maybe” 分支。按 MECE 分清主要类型后，选择最便宜、最可观测的一类先试。
-- 如果连续两段动作没有带来规则变化、关键对象移动、位置改善或完成态变化，停止脑内补救，先 `restart_level` 或回到上一个干净检查点。
-- 如果一句话里第二次出现 “let me think / 让我再想 / 这很复杂 / getting complicated”，立刻把问题改写成一个更短的可验证动作，而不是继续推演。
-- 读完 `baba_action_check.py` / `baba_try.py` 的结果后，以脚本输出为事实来源，不再复述完整坐标模拟；下一轮只解释和 delta 直接相关的差异。
-- 可以记录学到的通用机制，但不要把记录文件写成完整内心独白或关卡解法剧透。
-- 给 agent 的启动提示应要求“用用户语言简洁汇报，不展示长思考过程”。不要写“用中文思考”这类会鼓励长篇内心推演的提示。
+- 连续两段动作没有带来规则变化、关键对象移动、位置改善或完成态变化时，先 `restart_level` 或回到上一个干净检查点。
+- 读完脚本结果后，以脚本输出为事实来源，不复述完整坐标模拟；下一轮只解释和 delta 直接相关的差异。
+
+## 直播反馈预算
+
+- 已有安全、可观测假设时，直接执行 1-8 步实验；正常阶段争取在观察后 10 秒内发起下一段动作。此项是决策目标，不能靠空走、盲目重试或跳过计分满足。
+- 不为一次短实验寻找整关最优路线；需要搜索时默认总预算 5 秒，先固定当前 YOU 文字。只在结果说明需要扩大范围时允许移动 YOU 文字或提高预算。
+- 长等待要区分搜索、工具审批、执行、等待状态；不要把所有停顿都说成游戏读取失败。脚本不能承诺控制外部审批耗时。
+- 中断后先查询原 action 的进度；已完成不重发，有未确认按键时停止自动重放。先核对当前真实状态，再决定后续动作。
+- 具体接口与限制见 `docs/live_feedback_protocol.md`。
+
+## 按需参考
+
+- Baba 基础规则和移动风险：`docs/agent_baba_primer.md`
+- 假设生成、破墙排序、搜索入口选择：`docs/agent_hypothesis_workflows.md`
+- 可复用 live-state 解题方法：`docs/baba_state_guided_play_method.md`
+- 关卡解析方法：`docs/baba_level_parsing_method.md`
+- 文字规则搜索方法：`docs/baba_route_search_method.md`
+- 安装、配置、MCP server 配置、工具清单：`README.md`
+
+只在当前任务需要时打开参考文件。主反馈回路永远优先于泛读文档。
 
 ## 记录要求
 
-当前 run 目录来自 `baba_config.json` 的 `current_run_id`，路径形如：
-
-```text
-runs/<number_agent_model>/
-```
-
-例如 `runs/001_codex_gpt55/` 或 `runs/002_claude_sonnet/`。不要写入固定的 `default_run_id`。
+当前 run 目录来自 `baba_config.json` 的 `current_run_id`，路径形如 `runs/<number_agent_model>/`。不要写入固定的 `default_run_id`。
 
 每过一关，当前 run 目录里的四个文件都要更新：
 
@@ -193,15 +112,10 @@ runs/<number_agent_model>/
 - 如果 live state 的 `turn` 不可用，回退到验证路线展开步数，来源记为 `expanded_route_steps`。
 - 实测 undo 会把局面撤回，但不会把 live state `turn` 撤回；undo 本身不额外加一回合。
 - `elapsed_seconds` 只保留作排查基础设施差异的参考，不作为能力评分。
-
-根目录 `runs/*.template.md` 是公开模板。真实 run 子目录默认不提交。
+- 根目录 `runs/*.template.md` 是公开模板。真实 run 子目录默认不提交。
 
 ## Known Routes 边界
 
 - `runs/<run_id>/baba_known_routes.json` 是独立 replay 数据，不是 benchmark 解题来源。
 - `play_known_route` 可以用于回放或校验旧路线，但 benchmark 模式必须记录从当前状态学习、尝试、通过的过程。
 - `record_pass` 会把 `last_score_steps` / `best_score_steps` 写回该 JSON，方便之后回放时看到步数成绩；这不改变 benchmark 禁止读路线解题的边界。
-
-## 安装与配置边界
-
-安装、配置、MCP server 配置、工具清单放在 `README.md`。本文件只规定 agent 接手后的目标、行为、风险边界和记录要求。
